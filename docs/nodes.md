@@ -190,3 +190,91 @@ Depth-of-field style defocus blur.
 
 **Usage:**
 Create depth-of-field effects with optional depth map control.
+
+## Viewer Nodes
+
+### NukeViewer
+
+Nuke-style viewer with channel display options and viewing controls.
+
+**Inputs:**
+- `image` (IMAGE): Input image
+- `channel` (STRING): Channel to display (rgba, rgb, red, green, blue, alpha, luminance)
+- `gamma` (FLOAT): Gamma correction for viewing
+- `gain` (FLOAT): Gain/brightness adjustment
+- `show_overlay` (BOOLEAN): Show mask overlay
+- `overlay_text` (STRING): Optional overlay text
+- `mask` (IMAGE, optional): Mask for overlay visualization
+
+**Channel Options:**
+- `rgba`: Full color with alpha
+- `rgb`: RGB channels only
+- `red`: Red channel as grayscale
+- `green`: Green channel as grayscale
+- `blue`: Blue channel as grayscale
+- `alpha`: Alpha channel as grayscale
+- `luminance`: Calculated luminance
+
+**Usage:**
+Essential for inspecting images and channels during compositing. Use the channel shortcuts to quickly isolate R, G, B, or A channels. Gamma and gain controls help visualize over/under-exposed areas.
+
+### NukeChannelShuffle
+
+Rearrange and swap RGBA channels.
+
+**Inputs:**
+- `image` (IMAGE): Input image
+- `red_from` (STRING): Source for red channel
+- `green_from` (STRING): Source for green channel
+- `blue_from` (STRING): Source for blue channel
+- `alpha_from` (STRING): Source for alpha channel
+
+**Channel Sources:**
+- `red`, `green`, `blue`, `alpha`: Copy from existing channels
+- `zero`: Set to black (0.0)
+- `one`: Set to white (1.0)
+
+**Usage:**
+Useful for channel manipulation, creating custom alpha channels, or fixing channel order issues.
+
+### NukeRamp
+
+Generate test ramps and gradients.
+
+**Inputs:**
+- `width` (INT): Image width
+- `height` (INT): Image height
+- `ramp_type` (STRING): Type of ramp
+- `color_start` (STRING): Start color (R,G,B format)
+- `color_end` (STRING): End color (R,G,B format)
+- `invert` (BOOLEAN): Invert the ramp
+- `batch_size` (INT): Number of images to generate
+
+**Ramp Types:**
+- `horizontal`: Left to right gradient
+- `vertical`: Top to bottom gradient
+- `radial`: Circular gradient from center
+- `diagonal`: Diagonal gradient
+- `checkerboard`: Checkerboard pattern
+
+**Usage:**
+Generate test patterns for checking compositing operations, color spaces, and transformations.
+
+### NukeColorBars
+
+Generate standard color bar patterns.
+
+**Inputs:**
+- `width` (INT): Image width
+- `height` (INT): Image height
+- `pattern` (STRING): Color bar pattern type
+- `batch_size` (INT): Number of images to generate
+
+**Pattern Types:**
+- `smpte`: Standard SMPTE color bars (75% intensity)
+- `rgb_bars`: RGB primary color bars
+- `primary_colors`: Basic primary colors
+- `grayscale`: Grayscale steps
+
+**Usage:**
+Generate standard test patterns for monitor calibration, color pipeline testing, and reference comparisons.

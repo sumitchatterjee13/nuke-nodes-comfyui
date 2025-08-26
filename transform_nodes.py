@@ -28,8 +28,6 @@ class NukeTransform(NukeNodeBase):
                 "center_x": ("FLOAT", {"default": 0.5, "min": 0.0, "max": 1.0, "step": 0.01}),
                 "center_y": ("FLOAT", {"default": 0.5, "min": 0.0, "max": 1.0, "step": 0.01}),
                 "filter": (["nearest", "bilinear", "bicubic"], {"default": "bilinear"}),
-                "motionblur": ("FLOAT", {"default": 0.0, "min": 0.0, "max": 10.0, "step": 0.1}),
-                "shutter": ("FLOAT", {"default": 0.5, "min": 0.0, "max": 1.0, "step": 0.01}),
             }
         }
     
@@ -38,12 +36,19 @@ class NukeTransform(NukeNodeBase):
     CATEGORY = "Nuke/Transform"
     
     def transform(self, image, translate_x, translate_y, rotate, scale_x, scale_y, 
-                  skew_x, skew_y, center_x, center_y, filter, motionblur, shutter):
+                  skew_x, skew_y, center_x, center_y, filter):
         """
-        Apply 2D transformation to image
+        Apply 2D transformation to image with proper transparency handling
         """
         img = ensure_batch_dim(image)
         batch_size, height, width, channels = img.shape
+        
+        # Ensure we have RGBA channels for proper transparency
+        if channels == 3:
+            # Add alpha channel if missing
+            alpha = torch.ones(batch_size, height, width, 1, device=img.device, dtype=img.dtype)
+            img = torch.cat([img, alpha], dim=3)
+            channels = 4
         
         # Convert to tensor format for grid_sample (B, C, H, W)
         img_tensor = img.permute(0, 3, 1, 2)
@@ -54,18 +59,12 @@ class NukeTransform(NukeNodeBase):
             skew_x, skew_y, center_x, center_y, width, height
         )
         
-        # Apply motion blur if specified
-        if motionblur > 0:
-            result = self._apply_motion_blur(
-                img_tensor, transform_matrix, motionblur, shutter, filter
-            )
-        else:
-            # Create sampling grid
-            grid = self._create_sampling_grid(transform_matrix, height, width, img.device)
-            
-            # Apply transformation
-            mode = 'nearest' if filter == 'nearest' else 'bilinear'
-            result = F.grid_sample(img_tensor, grid, mode=mode, align_corners=False)
+        # Create sampling grid
+        grid = self._create_sampling_grid(transform_matrix, height, width, img.device)
+        
+        # Apply transformation with proper boundary handling for transparency
+        mode = 'nearest' if filter == 'nearest' else 'bilinear'
+        result = F.grid_sample(img_tensor, grid, mode=mode, padding_mode='zeros', align_corners=False)
         
         # Convert back to ComfyUI format (B, H, W, C)
         result = result.permute(0, 2, 3, 1)
@@ -158,33 +157,10 @@ class NukeTransform(NukeNodeBase):
         grid = transformed_coords[:, :2].reshape(1, height, width, 2)
         
         return grid
-    
-    def _apply_motion_blur(self, img_tensor, transform_matrix, motionblur, shutter, filter_type):
-        """Apply motion blur by sampling multiple positions"""
-        samples = max(3, int(motionblur * 2))
-        results = []
-        
-        for i in range(samples):
-            # Calculate interpolation factor
-            t = (i / (samples - 1) - 0.5) * shutter
-            
-            # Interpolate transformation
-            interp_matrix = transform_matrix * (1 + t * motionblur / 100)
-            
-            # Create grid and sample
-            height, width = img_tensor.shape[2], img_tensor.shape[3]
-            grid = self._create_sampling_grid(interp_matrix, height, width, img_tensor.device)
-            
-            mode = 'nearest' if filter_type == 'nearest' else 'bilinear'
-            sample = F.grid_sample(img_tensor, grid, mode=mode, align_corners=False)
-            results.append(sample)
-        
-        # Average all samples
-        return torch.stack(results).mean(dim=0)
 
 class NukeCornerPin(NukeNodeBase):
     """
-    Four-corner perspective transformation node
+    Four-corner perspective transformation node with proper transparency
     """
     
     @classmethod
@@ -209,11 +185,16 @@ class NukeCornerPin(NukeNodeBase):
     CATEGORY = "Nuke/Transform"
     
     def corner_pin(self, image, to1_x, to1_y, to2_x, to2_y, to3_x, to3_y, to4_x, to4_y, filter):
-        """
-        Apply four-corner perspective transformation
-        """
+        """Apply four-corner perspective transformation with proper transparency"""
         img = ensure_batch_dim(image)
         batch_size, height, width, channels = img.shape
+        
+        # Ensure we have RGBA channels for proper transparency
+        if channels == 3:
+            # Add alpha channel if missing
+            alpha = torch.ones(batch_size, height, width, 1, device=img.device, dtype=img.dtype)
+            img = torch.cat([img, alpha], dim=3)
+            channels = 4
         
         # Convert to tensor format for grid_sample
         img_tensor = img.permute(0, 3, 1, 2)
@@ -234,9 +215,9 @@ class NukeCornerPin(NukeNodeBase):
         # Create perspective transformation grid
         grid = self._create_perspective_grid(src_corners, dst_corners, height, width, img.device)
         
-        # Apply transformation
+        # Apply transformation with proper boundary handling for transparency
         mode = 'nearest' if filter == 'nearest' else 'bilinear'
-        result = F.grid_sample(img_tensor, grid, mode=mode, align_corners=False)
+        result = F.grid_sample(img_tensor, grid, mode=mode, padding_mode='zeros', align_corners=False)
         
         # Convert back to ComfyUI format
         result = result.permute(0, 2, 3, 1)
@@ -271,9 +252,7 @@ class NukeCornerPin(NukeNodeBase):
         return grid
 
 class NukeCrop(NukeNodeBase):
-    """
-    Precise cropping node with soft edges
-    """
+    """Precise cropping node with soft edges"""
     
     @classmethod
     def INPUT_TYPES(cls):
@@ -294,9 +273,7 @@ class NukeCrop(NukeNodeBase):
     CATEGORY = "Nuke/Transform"
     
     def crop(self, image, left, right, top, bottom, softness, resize):
-        """
-        Apply cropping with optional soft edges
-        """
+        """Apply cropping with optional soft edges"""
         img = ensure_batch_dim(image)
         batch_size, height, width, channels = img.shape
         

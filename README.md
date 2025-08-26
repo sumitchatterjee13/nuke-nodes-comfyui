@@ -46,6 +46,12 @@ pip install -r requirements.txt
 - **NukeMotionBlur**: Directional motion blur
 - **NukeDefocus**: Depth-of-field style blur
 
+### Viewer Nodes
+- **NukeViewer**: Channel viewer with R/G/B/A shortcuts and gamma/gain controls
+- **NukeChannelShuffle**: Rearrange and swap RGBA channels
+- **NukeRamp**: Generate test ramps and gradients
+- **NukeColorBars**: Generate standard color bar patterns
+
 ## Usage
 
 All nodes appear in the ComfyUI node menu under the "Nuke" category. Each node is designed to match the behavior and parameters of its Nuke counterpart as closely as possible.

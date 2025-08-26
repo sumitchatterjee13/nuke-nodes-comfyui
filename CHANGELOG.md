@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.0] - 2025-08-26
+
+### Added
+- **Viewer Nodes**:
+  - NukeViewer: Channel viewer with R/G/B/A shortcuts, gamma/gain controls, and mask overlay
+  - NukeChannelShuffle: Rearrange and swap RGBA channels with full control
+  - NukeRamp: Generate test ramps and gradients (horizontal, vertical, radial, diagonal, checkerboard)
+  - NukeColorBars: Generate standard color bar patterns (SMPTE, RGB, primary colors, grayscale)
+
+### Features
+- Channel viewing shortcuts for debugging (R, G, B, A, RGB, RGBA, Luminance)
+- Gamma and gain controls for proper viewing
+- Test pattern generation for pipeline validation
+- Channel manipulation and shuffling capabilities
+
 ## [1.0.0] - 2025-08-26
 
 ### Added
