@@ -17,7 +17,13 @@ cd ComfyUI/custom_nodes
 git clone https://github.com/sumitchatterjee13/nuke-nodes-comfyui.git nuke-nodes
 ```
 
-2. Restart ComfyUI
+2. Install the required dependencies:
+```bash
+cd nuke-nodes
+pip install -r requirements.txt
+```
+
+3. Restart ComfyUI
 
 ## Node Categories
 
