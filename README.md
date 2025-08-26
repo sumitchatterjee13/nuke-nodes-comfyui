@@ -50,7 +50,6 @@ All nodes appear in the ComfyUI node menu under the "Nuke" category. Each node i
 - **OpenCV** (may need separate installation: `pip install opencv-python`)
 - **NumPy** (usually included with PyTorch)
 
-> **Important**: Do not install PyTorch separately as it could conflict with ComfyUI's installation.
 
 ## Contributing
 
