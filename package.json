@@ -1,0 +1,43 @@
+{
+  "name": "nuke-nodes-comfyui",
+  "version": "1.0.0",
+  "description": "A comprehensive collection of ComfyUI custom nodes that replicate Nuke compositing functionality",
+  "main": "__init__.py",
+  "scripts": {
+    "test": "python -m pytest tests/",
+    "lint": "flake8 ."
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/yourusername/nuke-nodes-comfyui.git"
+  },
+  "keywords": [
+    "comfyui",
+    "nuke",
+    "compositing",
+    "image-processing",
+    "ai",
+    "custom-nodes",
+    "blur",
+    "merge",
+    "color-grading",
+    "transform"
+  ],
+  "author": "Your Name",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/yourusername/nuke-nodes-comfyui/issues"
+  },
+  "homepage": "https://github.com/yourusername/nuke-nodes-comfyui#readme",
+  "peerDependencies": {
+    "torch": ">=1.9.0"
+  },
+  "dependencies": {
+    "numpy": ">=1.19.0",
+    "opencv-python": ">=4.5.0"
+  },
+  "devDependencies": {
+    "pytest": ">=6.0.0",
+    "flake8": ">=3.8.0"
+  }
+}
