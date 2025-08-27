@@ -76,15 +76,11 @@ class NukeGrade(NukeNodeBase):
                 # Global controls
                 "multiply": (
                     "FLOAT",
-                    {"default": 1.0, "min": 0.0, "max": 3.0, "step": 0.01},
+                    {"default": 1.0, "min": 0.01, "max": 3.0, "step": 0.01},
                 ),
                 "offset": (
                     "FLOAT",
                     {"default": 0.0, "min": -1.0, "max": 1.0, "step": 0.01},
-                ),
-                "mix": (
-                    "FLOAT",
-                    {"default": 1.0, "min": 0.0, "max": 1.0, "step": 0.01},
                 ),
             },
             "optional": {
@@ -113,7 +109,6 @@ class NukeGrade(NukeNodeBase):
         gain_b_offset,
         multiply,
         offset,
-        mix,
         mask=None,
     ):
         """
@@ -178,9 +173,8 @@ class NukeGrade(NukeNodeBase):
                 ).permute(0, 2, 3, 1)
 
             mask_alpha = mask[:, :, :, :1]
-            rgb_graded = rgb + (rgb_graded - rgb) * mask_alpha * mix
-        else:
-            rgb_graded = rgb + (rgb_graded - rgb) * mix
+            rgb_graded = rgb + (rgb_graded - rgb) * mask_alpha
+        # If no mask, use the full graded result (no mix needed)
 
         # Recombine with alpha
         if alpha is not None:
