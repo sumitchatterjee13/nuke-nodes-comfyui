@@ -19,18 +19,59 @@ class NukeGrade(NukeNodeBase):
         return {
             "required": {
                 "image": ("IMAGE",),
-                # Master controls (apply to all channels)
+                # Master lift control
                 "lift": (
                     "FLOAT",
                     {"default": 0.0, "min": -1.0, "max": 1.0, "step": 0.01},
                 ),
+                # Individual lift channel adjustments (grouped right after master)
+                "lift_r_offset": (
+                    "FLOAT",
+                    {"default": 0.0, "min": -1.0, "max": 1.0, "step": 0.01},
+                ),
+                "lift_g_offset": (
+                    "FLOAT",
+                    {"default": 0.0, "min": -1.0, "max": 1.0, "step": 0.01},
+                ),
+                "lift_b_offset": (
+                    "FLOAT",
+                    {"default": 0.0, "min": -1.0, "max": 1.0, "step": 0.01},
+                ),
+                # Master gamma control
                 "gamma": (
                     "FLOAT",
                     {"default": 1.0, "min": 0.1, "max": 3.0, "step": 0.01},
                 ),
+                # Individual gamma channel adjustments (grouped right after master)
+                "gamma_r_offset": (
+                    "FLOAT",
+                    {"default": 0.0, "min": -2.0, "max": 2.0, "step": 0.01},
+                ),
+                "gamma_g_offset": (
+                    "FLOAT",
+                    {"default": 0.0, "min": -2.0, "max": 2.0, "step": 0.01},
+                ),
+                "gamma_b_offset": (
+                    "FLOAT",
+                    {"default": 0.0, "min": -2.0, "max": 2.0, "step": 0.01},
+                ),
+                # Master gain control
                 "gain": (
                     "FLOAT",
                     {"default": 1.0, "min": 0.0, "max": 3.0, "step": 0.01},
+                ),
+                # Individual gain channel adjustments (grouped right after master)
+                "gain_r_offset": (
+                    "FLOAT",
+                    {"default": 0.0, "min": -2.0, "max": 2.0, "step": 0.01},
+                ),
+                "gain_g_offset": (
+                    "FLOAT",
+                    {"default": 0.0, "min": -2.0, "max": 2.0, "step": 0.01},
+                ),
+                "gain_b_offset": (
+                    "FLOAT",
+                    {"default": 0.0, "min": -2.0, "max": 2.0, "step": 0.01},
                 ),
                 # Global controls
                 "multiply": (
@@ -48,43 +89,6 @@ class NukeGrade(NukeNodeBase):
             },
             "optional": {
                 "mask": ("IMAGE",),
-                # Individual channel adjustments (collapsed by default)
-                "lift_r_offset": (
-                    "FLOAT",
-                    {"default": 0.0, "min": -1.0, "max": 1.0, "step": 0.01},
-                ),
-                "lift_g_offset": (
-                    "FLOAT",
-                    {"default": 0.0, "min": -1.0, "max": 1.0, "step": 0.01},
-                ),
-                "lift_b_offset": (
-                    "FLOAT",
-                    {"default": 0.0, "min": -1.0, "max": 1.0, "step": 0.01},
-                ),
-                "gamma_r_offset": (
-                    "FLOAT",
-                    {"default": 0.0, "min": -2.0, "max": 2.0, "step": 0.01},
-                ),
-                "gamma_g_offset": (
-                    "FLOAT",
-                    {"default": 0.0, "min": -2.0, "max": 2.0, "step": 0.01},
-                ),
-                "gamma_b_offset": (
-                    "FLOAT",
-                    {"default": 0.0, "min": -2.0, "max": 2.0, "step": 0.01},
-                ),
-                "gain_r_offset": (
-                    "FLOAT",
-                    {"default": 0.0, "min": -2.0, "max": 2.0, "step": 0.01},
-                ),
-                "gain_g_offset": (
-                    "FLOAT",
-                    {"default": 0.0, "min": -2.0, "max": 2.0, "step": 0.01},
-                ),
-                "gain_b_offset": (
-                    "FLOAT",
-                    {"default": 0.0, "min": -2.0, "max": 2.0, "step": 0.01},
-                ),
             },
         }
 
@@ -96,21 +100,21 @@ class NukeGrade(NukeNodeBase):
         self,
         image,
         lift,
+        lift_r_offset,
+        lift_g_offset,
+        lift_b_offset,
         gamma,
+        gamma_r_offset,
+        gamma_g_offset,
+        gamma_b_offset,
         gain,
+        gain_r_offset,
+        gain_g_offset,
+        gain_b_offset,
         multiply,
         offset,
         mix,
         mask=None,
-        lift_r_offset=0.0,
-        lift_g_offset=0.0,
-        lift_b_offset=0.0,
-        gamma_r_offset=0.0,
-        gamma_g_offset=0.0,
-        gamma_b_offset=0.0,
-        gain_r_offset=0.0,
-        gain_g_offset=0.0,
-        gain_b_offset=0.0,
     ):
         """
         Apply professional color grading using master lift/gamma/gain controls with optional per-channel offsets
