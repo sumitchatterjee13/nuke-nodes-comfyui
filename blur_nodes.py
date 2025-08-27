@@ -8,7 +8,7 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 
-from utils import NukeNodeBase, ensure_batch_dim, normalize_tensor
+from .utils import NukeNodeBase, ensure_batch_dim, normalize_tensor
 
 
 class NukeBlur(NukeNodeBase):
