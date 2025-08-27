@@ -19,46 +19,20 @@ class NukeGrade(NukeNodeBase):
         return {
             "required": {
                 "image": ("IMAGE",),
-                # Lift (shadows)
-                "lift_r": (
+                # Master controls (apply to all channels)
+                "lift": (
                     "FLOAT",
                     {"default": 0.0, "min": -1.0, "max": 1.0, "step": 0.01},
                 ),
-                "lift_g": (
-                    "FLOAT",
-                    {"default": 0.0, "min": -1.0, "max": 1.0, "step": 0.01},
-                ),
-                "lift_b": (
-                    "FLOAT",
-                    {"default": 0.0, "min": -1.0, "max": 1.0, "step": 0.01},
-                ),
-                # Gamma (midtones)
-                "gamma_r": (
+                "gamma": (
                     "FLOAT",
                     {"default": 1.0, "min": 0.1, "max": 3.0, "step": 0.01},
                 ),
-                "gamma_g": (
-                    "FLOAT",
-                    {"default": 1.0, "min": 0.1, "max": 3.0, "step": 0.01},
-                ),
-                "gamma_b": (
-                    "FLOAT",
-                    {"default": 1.0, "min": 0.1, "max": 3.0, "step": 0.01},
-                ),
-                # Gain (highlights)
-                "gain_r": (
+                "gain": (
                     "FLOAT",
                     {"default": 1.0, "min": 0.0, "max": 3.0, "step": 0.01},
                 ),
-                "gain_g": (
-                    "FLOAT",
-                    {"default": 1.0, "min": 0.0, "max": 3.0, "step": 0.01},
-                ),
-                "gain_b": (
-                    "FLOAT",
-                    {"default": 1.0, "min": 0.0, "max": 3.0, "step": 0.01},
-                ),
-                # Master controls
+                # Global controls
                 "multiply": (
                     "FLOAT",
                     {"default": 1.0, "min": 0.0, "max": 3.0, "step": 0.01},
@@ -74,6 +48,43 @@ class NukeGrade(NukeNodeBase):
             },
             "optional": {
                 "mask": ("IMAGE",),
+                # Individual channel adjustments (collapsed by default)
+                "lift_r_offset": (
+                    "FLOAT",
+                    {"default": 0.0, "min": -1.0, "max": 1.0, "step": 0.01},
+                ),
+                "lift_g_offset": (
+                    "FLOAT",
+                    {"default": 0.0, "min": -1.0, "max": 1.0, "step": 0.01},
+                ),
+                "lift_b_offset": (
+                    "FLOAT",
+                    {"default": 0.0, "min": -1.0, "max": 1.0, "step": 0.01},
+                ),
+                "gamma_r_offset": (
+                    "FLOAT",
+                    {"default": 0.0, "min": -2.0, "max": 2.0, "step": 0.01},
+                ),
+                "gamma_g_offset": (
+                    "FLOAT",
+                    {"default": 0.0, "min": -2.0, "max": 2.0, "step": 0.01},
+                ),
+                "gamma_b_offset": (
+                    "FLOAT",
+                    {"default": 0.0, "min": -2.0, "max": 2.0, "step": 0.01},
+                ),
+                "gain_r_offset": (
+                    "FLOAT",
+                    {"default": 0.0, "min": -2.0, "max": 2.0, "step": 0.01},
+                ),
+                "gain_g_offset": (
+                    "FLOAT",
+                    {"default": 0.0, "min": -2.0, "max": 2.0, "step": 0.01},
+                ),
+                "gain_b_offset": (
+                    "FLOAT",
+                    {"default": 0.0, "min": -2.0, "max": 2.0, "step": 0.01},
+                ),
             },
         }
 
@@ -84,22 +95,25 @@ class NukeGrade(NukeNodeBase):
     def grade(
         self,
         image,
-        lift_r,
-        lift_g,
-        lift_b,
-        gamma_r,
-        gamma_g,
-        gamma_b,
-        gain_r,
-        gain_g,
-        gain_b,
+        lift,
+        gamma,
+        gain,
         multiply,
         offset,
         mix,
         mask=None,
+        lift_r_offset=0.0,
+        lift_g_offset=0.0,
+        lift_b_offset=0.0,
+        gamma_r_offset=0.0,
+        gamma_g_offset=0.0,
+        gamma_b_offset=0.0,
+        gain_r_offset=0.0,
+        gain_g_offset=0.0,
+        gain_b_offset=0.0,
     ):
         """
-        Apply professional color grading using lift/gamma/gain controls
+        Apply professional color grading using master lift/gamma/gain controls with optional per-channel offsets
         """
         img = ensure_batch_dim(image)
 
@@ -111,26 +125,39 @@ class NukeGrade(NukeNodeBase):
             rgb = img
             alpha = None
 
+        # Calculate final values: master + per-channel offset
+        final_lift_r = lift + lift_r_offset
+        final_lift_g = lift + lift_g_offset
+        final_lift_b = lift + lift_b_offset
+        
+        final_gamma_r = gamma + gamma_r_offset
+        final_gamma_g = gamma + gamma_g_offset
+        final_gamma_b = gamma + gamma_b_offset
+        
+        final_gain_r = gain + gain_r_offset
+        final_gain_g = gain + gain_g_offset
+        final_gain_b = gain + gain_b_offset
+
         # Create color correction vectors
-        lift = torch.tensor(
-            [lift_r, lift_g, lift_b], device=rgb.device, dtype=rgb.dtype
+        lift_vec = torch.tensor(
+            [final_lift_r, final_lift_g, final_lift_b], device=rgb.device, dtype=rgb.dtype
         ).view(1, 1, 1, 3)
-        gamma = torch.tensor(
-            [gamma_r, gamma_g, gamma_b], device=rgb.device, dtype=rgb.dtype
+        gamma_vec = torch.tensor(
+            [final_gamma_r, final_gamma_g, final_gamma_b], device=rgb.device, dtype=rgb.dtype
         ).view(1, 1, 1, 3)
-        gain = torch.tensor(
-            [gain_r, gain_g, gain_b], device=rgb.device, dtype=rgb.dtype
+        gain_vec = torch.tensor(
+            [final_gain_r, final_gain_g, final_gain_b], device=rgb.device, dtype=rgb.dtype
         ).view(1, 1, 1, 3)
 
         # Apply lift/gamma/gain formula: ((rgb + lift) ^ (1/gamma)) * gain
         # Ensure positive values for gamma correction
-        rgb_lifted = torch.clamp(rgb + lift, min=1e-7)
+        rgb_lifted = torch.clamp(rgb + lift_vec, min=1e-7)
 
         # Apply gamma correction
-        rgb_gamma = torch.pow(rgb_lifted, 1.0 / torch.clamp(gamma, min=0.1))
+        rgb_gamma = torch.pow(rgb_lifted, 1.0 / torch.clamp(gamma_vec, min=0.1))
 
         # Apply gain
-        rgb_graded = rgb_gamma * gain
+        rgb_graded = rgb_gamma * gain_vec
 
         # Apply master multiply and offset
         rgb_graded = rgb_graded * multiply + offset
