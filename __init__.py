@@ -3,6 +3,19 @@ Nuke Nodes for ComfyUI
 A collection of custom nodes that replicate Nuke compositing functionality
 """
 
+# Import version information
+from .version import (
+    __version__,
+    __title__,
+    __description__, 
+    __author__,
+    __license__,
+    __url__,
+    get_version,
+    get_version_info,
+    get_full_version
+)
+
 from .blur_nodes import *
 from .grade_nodes import *
 from .merge_nodes import *
@@ -39,4 +52,16 @@ NODE_DISPLAY_NAME_MAPPINGS.update(transform_display_mappings)
 NODE_DISPLAY_NAME_MAPPINGS.update(blur_display_mappings)
 NODE_DISPLAY_NAME_MAPPINGS.update(viewer_display_mappings)
 
-__all__ = ["NODE_CLASS_MAPPINGS", "NODE_DISPLAY_NAME_MAPPINGS"]
+__all__ = [
+    "NODE_CLASS_MAPPINGS", 
+    "NODE_DISPLAY_NAME_MAPPINGS",
+    "__version__",
+    "__title__",
+    "__description__",
+    "__author__",
+    "__license__",
+    "__url__",
+    "get_version",
+    "get_version_info", 
+    "get_full_version"
+]

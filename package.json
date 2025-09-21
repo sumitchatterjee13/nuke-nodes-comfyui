@@ -1,43 +1,60 @@
 {
-  "name": "nuke-nodes-comfyui",
+  "name": "nuke-nodes",
   "version": "1.0.0",
-  "description": "A comprehensive collection of ComfyUI custom nodes that replicate Nuke compositing functionality",
+  "description": "ComfyUI custom nodes that replicate Nuke compositing functionality",
   "main": "__init__.py",
-  "scripts": {
-    "test": "python -m pytest tests/",
-    "lint": "flake8 ."
-  },
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/yourusername/nuke-nodes-comfyui.git"
-  },
   "keywords": [
     "comfyui",
+    "nodes",
+    "compositing", 
     "nuke",
-    "compositing",
     "image-processing",
-    "ai",
-    "custom-nodes",
-    "blur",
-    "merge",
-    "color-grading",
-    "transform"
+    "custom-nodes"
   ],
-  "author": "Your Name",
+  "author": "Nuke Nodes Team",
   "license": "MIT",
-  "bugs": {
-    "url": "https://github.com/yourusername/nuke-nodes-comfyui/issues"
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/your-username/nuke-nodes.git"
   },
-  "homepage": "https://github.com/yourusername/nuke-nodes-comfyui#readme",
-  "peerDependencies": {
-    "torch": ">=1.9.0"
+  "bugs": {
+    "url": "https://github.com/your-username/nuke-nodes/issues"
+  },
+  "homepage": "https://github.com/your-username/nuke-nodes#readme",
+  "engines": {
+    "python": ">=3.8"
+  },
+  "scripts": {
+    "setup": "python setup.py",
+    "test": "python -m pytest tests/",
+    "lint": "flake8 *.py",
+    "format": "black *.py"
   },
   "dependencies": {
-    "numpy": ">=1.19.0",
+    "torch": ">=1.9.0",
+    "numpy": ">=1.21.0", 
     "opencv-python": ">=4.5.0"
   },
   "devDependencies": {
-    "pytest": ">=6.0.0",
-    "flake8": ">=3.8.0"
+    "pytest": ">=6.0",
+    "black": ">=21.0",
+    "flake8": ">=3.8"
+  },
+  "comfyui": {
+    "title": "Nuke Nodes",
+    "category": "compositing",
+    "nodes": [
+      "NukeMerge",
+      "NukeMix", 
+      "NukeGrade",
+      "NukeTransform",
+      "NukeBlur"
+    ],
+    "version_check": true,
+    "python_dependencies": [
+      "torch>=1.9.0",
+      "numpy>=1.21.0",
+      "opencv-python>=4.5.0"
+    ]
   }
 }

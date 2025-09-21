@@ -1,0 +1,41 @@
+# Include package metadata files
+include README.md
+include LICENSE  
+include CHANGELOG.md
+include CONTRIBUTING.md
+include pyproject.toml
+include package.json
+include requirements.txt
+include MANIFEST.in
+
+# Include all Python files
+include *.py
+recursive-include . *.py
+
+# Include documentation
+recursive-include docs *
+graft docs
+
+# Include examples
+recursive-include examples *
+graft examples
+
+# Include tests
+recursive-include tests *
+graft tests
+
+# Include screenshots/images
+recursive-include screenshots *
+graft screenshots
+
+# Exclude unnecessary files
+global-exclude __pycache__
+global-exclude *.py[co]
+global-exclude *.so
+global-exclude .DS_Store
+global-exclude .git*
+global-exclude .vscode
+global-exclude .pytest_cache
+global-exclude *.egg-info
+global-exclude build
+global-exclude dist

@@ -23,7 +23,9 @@ class NukeMerge(NukeNodeBase):
                 "operation": (
                     [
                         "over",
-                        "add",
+                        "under",
+                        "plus",
+                        "from",
                         "multiply",
                         "screen",
                         "overlay",
@@ -35,8 +37,21 @@ class NukeMerge(NukeNodeBase):
                         "lighten",
                         "difference",
                         "exclusion",
+                        "average",
                         "subtract",
                         "divide",
+                        "min",
+                        "max",
+                        "mask",
+                        "stencil",
+                        "hypot",
+                        "in",
+                        "out",
+                        "atop",
+                        "xor",
+                        "conjoint_over",
+                        "disjoint_over",
+                        "copy",
                     ],
                     {"default": "over"},
                 ),
@@ -101,15 +116,68 @@ class NukeMerge(NukeNodeBase):
         # Apply blend mode
         result_rgb = self._apply_blend_mode(a_rgb, b_rgb, operation)
 
-        # Composite with alpha
+        # Composite with alpha based on operation
         if operation == "over":
             # Standard over operation: A over B
             result_alpha = a_alpha + b_alpha * (1 - a_alpha)
             result_rgb = (
                 a_rgb * a_alpha + b_rgb * b_alpha * (1 - a_alpha)
             ) / torch.clamp(result_alpha, min=1e-7)
+        elif operation == "under":
+            # B under A (swap A and B)
+            result_alpha = b_alpha + a_alpha * (1 - b_alpha)
+            result_rgb = (
+                b_rgb * b_alpha + a_rgb * a_alpha * (1 - b_alpha)
+            ) / torch.clamp(result_alpha, min=1e-7)
+        elif operation == "in":
+            # A in B: show A where B has alpha
+            result_alpha = a_alpha * b_alpha
+            result_rgb = result_rgb * b_alpha
+        elif operation == "out":
+            # A out B: show A where B has no alpha
+            result_alpha = a_alpha * (1 - b_alpha)
+            result_rgb = result_rgb * (1 - b_alpha)
+        elif operation == "atop":
+            # A atop B: A over B, but only where B exists
+            result_alpha = b_alpha
+            result_rgb = (
+                result_rgb * a_alpha + b_rgb * (1 - a_alpha)
+            ) * b_alpha
+        elif operation == "xor":
+            # A xor B: A and B where they don't overlap
+            result_alpha = a_alpha * (1 - b_alpha) + b_alpha * (1 - a_alpha)
+            result_rgb = (
+                a_rgb * a_alpha * (1 - b_alpha) + 
+                b_rgb * b_alpha * (1 - a_alpha)
+            ) / torch.clamp(result_alpha, min=1e-7)
+        elif operation == "mask":
+            # A masked by B: A where B has alpha
+            result_alpha = a_alpha * b_alpha
+            result_rgb = result_rgb
+        elif operation == "stencil":
+            # A stenciled by B: A where B has no alpha
+            result_alpha = a_alpha * (1 - b_alpha)
+            result_rgb = result_rgb
+        elif operation == "conjoint_over":
+            # Conjoint over: A over B with alpha clamping
+            fa = torch.clamp(a_alpha, 0, 1 - b_alpha + 1e-7)
+            result_alpha = fa + b_alpha
+            result_rgb = (
+                result_rgb * fa + b_rgb * b_alpha
+            ) / torch.clamp(result_alpha, min=1e-7)
+        elif operation == "disjoint_over":
+            # Disjoint over: A over B with alpha separation
+            fa = torch.clamp(a_alpha, 1 - b_alpha, 1)
+            result_alpha = fa + b_alpha
+            result_rgb = (
+                result_rgb * fa + b_rgb * b_alpha
+            ) / torch.clamp(result_alpha, min=1e-7)
+        elif operation == "copy":
+            # Copy A: just return A
+            result_alpha = a_alpha
+            result_rgb = result_rgb
         else:
-            # For other operations, use simple alpha blending
+            # For mathematical operations, use simple alpha blending
             result_alpha = torch.max(a_alpha, b_alpha)
 
         # Apply mask if provided
@@ -143,9 +211,13 @@ class NukeMerge(NukeNodeBase):
     def _apply_blend_mode(self, a, b, mode):
         """Apply specified blend mode to RGB channels"""
         if mode == "over":
-            return b
-        elif mode == "add":
+            return b  # Will be handled in compositing section
+        elif mode == "under":
+            return a  # B under A (swap inputs)
+        elif mode == "plus":
             return a + b
+        elif mode == "from":
+            return torch.clamp(a - b, 0, 1)
         elif mode == "multiply":
             return a * b
         elif mode == "screen":
@@ -176,10 +248,36 @@ class NukeMerge(NukeNodeBase):
             return torch.abs(a - b)
         elif mode == "exclusion":
             return a + b - 2 * a * b
+        elif mode == "average":
+            return (a + b) / 2
         elif mode == "subtract":
             return torch.clamp(a - b, 0, 1)
         elif mode == "divide":
             return torch.clamp(a / (b + 1e-7), 0, 1)
+        elif mode == "min":
+            return torch.min(a, b)
+        elif mode == "max":
+            return torch.max(a, b)
+        elif mode == "mask":
+            return a  # Will be handled with alpha compositing
+        elif mode == "stencil":
+            return a  # Will be handled with alpha compositing
+        elif mode == "hypot":
+            return torch.sqrt(a * a + b * b)
+        elif mode == "in":
+            return a  # Will be handled with alpha compositing
+        elif mode == "out":
+            return a  # Will be handled with alpha compositing
+        elif mode == "atop":
+            return a  # Will be handled with alpha compositing
+        elif mode == "xor":
+            return a  # Will be handled with alpha compositing
+        elif mode == "conjoint_over":
+            return a  # Will be handled with alpha compositing
+        elif mode == "disjoint_over":
+            return a  # Will be handled with alpha compositing
+        elif mode == "copy":
+            return a
         else:
             return b
 

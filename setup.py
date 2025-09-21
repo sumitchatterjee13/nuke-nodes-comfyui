@@ -132,10 +132,37 @@ def test_imports():
     return success
 
 
+def show_version_info():
+    """Show version information"""
+    try:
+        from version import get_full_version
+        version_info = get_full_version()
+        print(f"📦 Package: {version_info['title']} v{version_info['version']}")
+        print(f"📝 Description: {version_info['description']}")
+        print(f"👨‍💻 Author: {version_info['author']}")
+        print(f"📅 Release Date: {version_info['release_date']}")
+        print(f"📄 License: {version_info['license']}")
+        if version_info['is_stable']:
+            print("✅ Status: Stable Release")
+        elif version_info['is_beta']:
+            print("🧪 Status: Beta Release")
+        else:
+            print("🚧 Status: Development Version")
+        print(f"🏷️  Node Categories: {', '.join(version_info['node_categories'])}")
+    except Exception as e:
+        print(f"⚠️  Could not load version info: {e}")
+        print("📦 Package: Nuke Nodes for ComfyUI")
+
+
 def main():
     """Main setup function"""
     print("🔧 Nuke Nodes for ComfyUI - Setup & Verification")
     print("=" * 50)
+    
+    # Show version information
+    print()
+    show_version_info()
+    print()
 
     # Check Python version
     if not check_python_version():
