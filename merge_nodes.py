@@ -307,22 +307,32 @@ class NukeMerge(NukeNodeBase):
 
         # Apply mask if provided
         if mask is not None:
-            mask = ensure_batch_dim(mask)
-            # Handle mask dimensions
-            if len(mask.shape) == 4 and mask.shape[3] > 1:
-                mask_alpha = mask[:, :, :, :1]
+            # ComfyUI MASK type is typically (B, H, W) - 3D tensor
+            # Handle different mask formats
+            if len(mask.shape) == 2:
+                # (H, W) -> (1, H, W, 1)
+                mask_alpha = mask.unsqueeze(0).unsqueeze(-1)
             elif len(mask.shape) == 3:
+                # (B, H, W) -> (B, H, W, 1)
                 mask_alpha = mask.unsqueeze(-1)
+            elif len(mask.shape) == 4:
+                # (B, H, W, C) - take first channel
+                mask_alpha = mask[:, :, :, :1]
             else:
                 mask_alpha = mask
 
+            # Resize mask if needed
             if mask_alpha.shape[1:3] != result_rgb.shape[1:3]:
+                # Need to permute for interpolate: (B, H, W, 1) -> (B, 1, H, W)
+                mask_alpha = mask_alpha.permute(0, 3, 1, 2)
                 mask_alpha = F.interpolate(
-                    mask_alpha.permute(0, 3, 1, 2),
-                    size=result_rgb.shape[1:3],
+                    mask_alpha,
+                    size=(result_rgb.shape[1], result_rgb.shape[2]),
                     mode="bilinear",
                     align_corners=False,
-                ).permute(0, 2, 3, 1)
+                )
+                # Back to (B, H, W, 1)
+                mask_alpha = mask_alpha.permute(0, 2, 3, 1)
 
             # Blend between B (original) and result based on mask
             effective_mix = mask_alpha * mix
@@ -434,6 +444,10 @@ class NukeConstant(NukeNodeBase):
                     "FLOAT",
                     {"default": 1.0, "min": 0.0, "max": 1.0, "step": 0.01},
                 ),
+                "output_alpha": (
+                    "BOOLEAN",
+                    {"default": False},
+                ),
             },
             "optional": {
                 "batch_size": (
@@ -447,22 +461,30 @@ class NukeConstant(NukeNodeBase):
     FUNCTION = "generate"
     CATEGORY = "Nuke/Generate"
 
-    def generate(self, width, height, red, green, blue, alpha, batch_size=1):
+    def generate(self, width, height, red, green, blue, alpha, output_alpha, batch_size=1):
         """
         Generate a solid color image with the specified RGBA values.
 
-        Returns:
-            Tensor of shape (batch_size, height, width, 4) with RGBA channels
-        """
-        # Create the constant color tensor
-        # Shape: (batch_size, height, width, 4) for RGBA
-        constant = torch.zeros((batch_size, height, width, 4), dtype=torch.float32)
+        Args:
+            output_alpha: If True, output RGBA (4 channels). If False, output RGB (3 channels).
+                         RGB is more compatible with other ComfyUI nodes.
 
-        # Set the color values
-        constant[:, :, :, 0] = red
-        constant[:, :, :, 1] = green
-        constant[:, :, :, 2] = blue
-        constant[:, :, :, 3] = alpha
+        Returns:
+            Tensor of shape (batch_size, height, width, 3 or 4)
+        """
+        if output_alpha:
+            # Shape: (batch_size, height, width, 4) for RGBA
+            constant = torch.zeros((batch_size, height, width, 4), dtype=torch.float32)
+            constant[:, :, :, 0] = red
+            constant[:, :, :, 1] = green
+            constant[:, :, :, 2] = blue
+            constant[:, :, :, 3] = alpha
+        else:
+            # Shape: (batch_size, height, width, 3) for RGB - more compatible
+            constant = torch.zeros((batch_size, height, width, 3), dtype=torch.float32)
+            constant[:, :, :, 0] = red
+            constant[:, :, :, 1] = green
+            constant[:, :, :, 2] = blue
 
         return (constant,)
 
