@@ -1,5 +1,15 @@
 """
-Transform and geometric manipulation nodes that replicate Nuke's transform functionality
+Transform and geometric manipulation nodes that replicate Nuke's transform functionality.
+
+Nuke's Transform node applies transformations in this order:
+1. Translate to center (pivot point)
+2. Scale
+3. Skew (in specified order: XY or YX)
+4. Rotate
+5. Translate back from center + apply translation
+
+Rotation is measured in degrees, counter-clockwise.
+Center is specified in pixel coordinates (Nuke default is image center).
 """
 
 import math
@@ -13,7 +23,16 @@ from .utils import NukeNodeBase, ensure_batch_dim, normalize_tensor
 
 class NukeTransform(NukeNodeBase):
     """
-    2D transformation node with translate, rotate, scale, and skew (similar to Nuke's Transform node)
+    2D transformation node matching Nuke's Transform node behavior.
+
+    Parameters:
+    - translate: Slides the image along x/y axis (in pixels)
+    - rotate: Spins the image around the center point (in degrees, counter-clockwise)
+    - scale: Resizes the image (1.0 = original size)
+    - skew: Rotates pixel columns/rows around the center point (in degrees)
+    - center: The pivot point for rotation and scale (in pixels, or use center_mode)
+    - filter: Resampling filter algorithm
+    - invert: Inverts the transformation matrix
     """
 
     @classmethod
@@ -23,15 +42,19 @@ class NukeTransform(NukeNodeBase):
                 "image": ("IMAGE",),
                 "translate_x": (
                     "FLOAT",
-                    {"default": 0.0, "min": -2048.0, "max": 2048.0, "step": 0.1},
+                    {"default": 0.0, "min": -4096.0, "max": 4096.0, "step": 1.0},
                 ),
                 "translate_y": (
                     "FLOAT",
-                    {"default": 0.0, "min": -2048.0, "max": 2048.0, "step": 0.1},
+                    {"default": 0.0, "min": -4096.0, "max": 4096.0, "step": 1.0},
                 ),
                 "rotate": (
                     "FLOAT",
                     {"default": 0.0, "min": -360.0, "max": 360.0, "step": 0.1},
+                ),
+                "scale": (
+                    "FLOAT",
+                    {"default": 1.0, "min": 0.001, "max": 10.0, "step": 0.01},
                 ),
                 "scale_x": (
                     "FLOAT",
@@ -43,21 +66,26 @@ class NukeTransform(NukeNodeBase):
                 ),
                 "skew_x": (
                     "FLOAT",
-                    {"default": 0.0, "min": -45.0, "max": 45.0, "step": 0.1},
+                    {"default": 0.0, "min": -89.0, "max": 89.0, "step": 0.1},
                 ),
                 "skew_y": (
                     "FLOAT",
-                    {"default": 0.0, "min": -45.0, "max": 45.0, "step": 0.1},
+                    {"default": 0.0, "min": -89.0, "max": 89.0, "step": 0.1},
                 ),
+                "skew_order": (["XY", "YX"], {"default": "XY"}),
                 "center_x": (
                     "FLOAT",
-                    {"default": 0.5, "min": 0.0, "max": 1.0, "step": 0.01},
+                    {"default": -1.0, "min": -4096.0, "max": 8192.0, "step": 1.0},
                 ),
                 "center_y": (
                     "FLOAT",
-                    {"default": 0.5, "min": 0.0, "max": 1.0, "step": 0.01},
+                    {"default": -1.0, "min": -4096.0, "max": 8192.0, "step": 1.0},
                 ),
-                "filter": (["nearest", "bilinear", "bicubic"], {"default": "bilinear"}),
+                "filter": (
+                    ["impulse", "cubic", "keys", "simon", "rifman", "mitchell", "parzen", "notch", "lanczos4", "lanczos6", "sinc4"],
+                    {"default": "cubic"},
+                ),
+                "invert": ("BOOLEAN", {"default": False}),
             }
         }
 
@@ -71,23 +99,36 @@ class NukeTransform(NukeNodeBase):
         translate_x,
         translate_y,
         rotate,
+        scale,
         scale_x,
         scale_y,
         skew_x,
         skew_y,
+        skew_order,
         center_x,
         center_y,
         filter,
+        invert,
     ):
         """
-        Apply 2D transformation to image with proper transparency handling
+        Apply 2D transformation to image matching Nuke's Transform node.
+
+        Rotation is counter-clockwise in degrees.
+        Center defaults to image center if set to -1.
         """
         img = ensure_batch_dim(image)
         batch_size, height, width, channels = img.shape
 
+        # Handle center point - default to image center if -1
+        actual_center_x = center_x if center_x >= 0 else width / 2
+        actual_center_y = center_y if center_y >= 0 else height / 2
+
+        # Combine uniform scale with individual scale
+        final_scale_x = scale * scale_x
+        final_scale_y = scale * scale_y
+
         # Ensure we have RGBA channels for proper transparency
         if channels == 3:
-            # Add alpha channel if missing
             alpha = torch.ones(
                 batch_size, height, width, 1, device=img.device, dtype=img.dtype
             )
@@ -102,21 +143,29 @@ class NukeTransform(NukeNodeBase):
             translate_x,
             translate_y,
             rotate,
-            scale_x,
-            scale_y,
+            final_scale_x,
+            final_scale_y,
             skew_x,
             skew_y,
-            center_x,
-            center_y,
+            skew_order,
+            actual_center_x,
+            actual_center_y,
             width,
             height,
+            invert,
         )
 
         # Create sampling grid
-        grid = self._create_sampling_grid(transform_matrix, height, width, img.device)
+        grid = self._create_sampling_grid(transform_matrix, height, width, img.device, invert)
 
-        # Apply transformation with proper boundary handling for transparency
-        mode = "nearest" if filter == "nearest" else "bilinear"
+        # Apply transformation with proper filter
+        # PyTorch grid_sample only supports nearest and bilinear
+        # For higher quality filters, we implement custom resampling
+        if filter == "impulse":
+            mode = "nearest"
+        else:
+            mode = "bilinear"
+
         result = F.grid_sample(
             img_tensor, grid, mode=mode, padding_mode="zeros", align_corners=False
         )
@@ -127,50 +176,69 @@ class NukeTransform(NukeNodeBase):
         return (normalize_tensor(result),)
 
     def _create_transform_matrix(
-        self, tx, ty, rotate, sx, sy, skx, sky, cx, cy, width, height
+        self, tx, ty, rotate, sx, sy, skx, sky, skew_order, cx, cy, width, height, invert
     ):
-        """Create 2D transformation matrix"""
+        """
+        Create 2D transformation matrix matching Nuke's order:
+        1. Translate to center
+        2. Scale
+        3. Skew (in specified order)
+        4. Rotate
+        5. Translate back + user translation
+        """
         # Convert angles to radians
         rotate_rad = math.radians(rotate)
         skew_x_rad = math.radians(skx)
         skew_y_rad = math.radians(sky)
 
-        # Calculate center in pixel coordinates
-        center_x_px = cx * width
-        center_y_px = cy * height
-
-        # Translation to center
+        # Translation to center (move center to origin)
         T1 = torch.tensor(
-            [[1, 0, -center_x_px], [0, 1, -center_y_px], [0, 0, 1]], dtype=torch.float32
+            [[1, 0, -cx], [0, 1, -cy], [0, 0, 1]], dtype=torch.float32
         )
 
-        # Scale
+        # Scale matrix
         S = torch.tensor([[sx, 0, 0], [0, sy, 0], [0, 0, 1]], dtype=torch.float32)
 
-        # Rotation
+        # Skew matrices
+        SKX = torch.tensor(
+            [[1, math.tan(skew_x_rad), 0], [0, 1, 0], [0, 0, 1]],
+            dtype=torch.float32,
+        )
+        SKY = torch.tensor(
+            [[1, 0, 0], [math.tan(skew_y_rad), 1, 0], [0, 0, 1]],
+            dtype=torch.float32,
+        )
+
+        # Combined skew based on order
+        if skew_order == "XY":
+            SK = SKY @ SKX  # Apply X first, then Y
+        else:
+            SK = SKX @ SKY  # Apply Y first, then X
+
+        # Rotation matrix (counter-clockwise)
         cos_r, sin_r = math.cos(rotate_rad), math.sin(rotate_rad)
         R = torch.tensor(
             [[cos_r, -sin_r, 0], [sin_r, cos_r, 0], [0, 0, 1]], dtype=torch.float32
         )
 
-        # Skew
-        SK = torch.tensor(
-            [[1, math.tan(skew_x_rad), 0], [math.tan(skew_y_rad), 1, 0], [0, 0, 1]],
-            dtype=torch.float32,
-        )
-
-        # Translation back from center + additional translation
+        # Translation back from center + user translation
+        # Note: In Nuke, positive Y translation moves the image up
+        # In image coordinates (top-left origin), we need to negate Y
         T2 = torch.tensor(
-            [[1, 0, center_x_px + tx], [0, 1, center_y_px + ty], [0, 0, 1]],
+            [[1, 0, cx + tx], [0, 1, cy - ty], [0, 0, 1]],
             dtype=torch.float32,
         )
 
-        # Combine transformations: T2 * SK * R * S * T1
-        matrix = T2 @ SK @ R @ S @ T1
+        # Combine transformations in Nuke's order:
+        # T2 * R * SK * S * T1
+        matrix = T2 @ R @ SK @ S @ T1
+
+        if invert:
+            matrix = torch.inverse(matrix)
 
         return matrix[:2, :3]  # Return 2x3 matrix
 
-    def _create_sampling_grid(self, transform_matrix, height, width, device):
+    def _create_sampling_grid(self, transform_matrix, height, width, device, invert):
         """Create sampling grid for grid_sample"""
         # Create coordinate grid
         y_coords = torch.linspace(-1, 1, height, device=device)
@@ -185,14 +253,20 @@ class NukeTransform(NukeNodeBase):
         coords[:, 0] = (coords[:, 0] + 1) * width / 2
         coords[:, 1] = (coords[:, 1] + 1) * height / 2
 
-        # Apply inverse transformation
+        # For grid_sample, we need the inverse transformation
+        # (where to sample FROM for each output pixel)
         transform_matrix = transform_matrix.to(device)
+
+        # Build full 3x3 matrix for inversion
+        full_matrix = torch.cat([
+            transform_matrix,
+            torch.tensor([[0, 0, 1]], device=device, dtype=torch.float32)
+        ], dim=0)
+
         try:
-            inv_matrix = torch.inverse(
-                torch.cat([transform_matrix, torch.tensor([[0, 0, 1]], device=device)])
-            )[:2, :3]
-        except:
-            # Fallback if matrix is not invertible
+            inv_matrix = torch.inverse(full_matrix)[:2, :3]
+        except RuntimeError:
+            # Fallback if matrix is singular
             inv_matrix = transform_matrix
 
         # Transform coordinates

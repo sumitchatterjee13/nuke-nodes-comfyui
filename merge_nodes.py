@@ -1,5 +1,12 @@
 """
-Merge and compositing nodes that replicate Nuke's merge functionality
+Merge and compositing nodes that replicate Nuke's merge functionality.
+
+In Nuke's Merge node:
+- A input is the foreground (top layer)
+- B input is the background (bottom layer)
+- "A over B" means A composited on top of B
+
+All Porter-Duff operations follow standard compositing formulas.
 """
 
 import numpy as np
@@ -11,21 +18,26 @@ from .utils import NukeNodeBase, ensure_batch_dim, normalize_tensor
 
 class NukeMerge(NukeNodeBase):
     """
-    Advanced merge node with multiple blend modes, similar to Nuke's Merge node
+    Advanced merge node with multiple blend modes, matching Nuke's Merge node behavior.
+
+    A = Foreground (top layer)
+    B = Background (bottom layer)
+
+    For "over" operation: A is composited over B (A on top of B)
     """
 
     @classmethod
     def INPUT_TYPES(cls):
         return {
             "required": {
-                "image_a": ("IMAGE",),
-                "image_b": ("IMAGE",),
+                "A": ("IMAGE",),  # Foreground
+                "B": ("IMAGE",),  # Background
                 "operation": (
                     [
                         "over",
                         "under",
                         "plus",
-                        "from",
+                        "minus",
                         "multiply",
                         "screen",
                         "overlay",
@@ -38,19 +50,17 @@ class NukeMerge(NukeNodeBase):
                         "difference",
                         "exclusion",
                         "average",
-                        "subtract",
                         "divide",
                         "min",
                         "max",
                         "mask",
                         "stencil",
+                        "matte",
                         "hypot",
                         "in",
                         "out",
                         "atop",
                         "xor",
-                        "conjoint_over",
-                        "disjoint_over",
                         "copy",
                     ],
                     {"default": "over"},
@@ -61,7 +71,7 @@ class NukeMerge(NukeNodeBase):
                 ),
             },
             "optional": {
-                "mask": ("IMAGE",),
+                "mask": ("MASK",),
             },
         }
 
@@ -69,217 +79,272 @@ class NukeMerge(NukeNodeBase):
     FUNCTION = "merge"
     CATEGORY = "Nuke/Merge"
 
-    def merge(self, image_a, image_b, operation, mix, mask=None):
+    def merge(self, A, B, operation, mix, mask=None):
         """
-        Merge two images using specified blend mode
+        Merge two images using specified blend mode.
+
+        A = Foreground (the layer on top)
+        B = Background (the layer behind)
+
+        For "over": Result = A over B (A composited on top of B)
         """
         # Ensure both images have batch dimension
-        a = ensure_batch_dim(image_a)
-        b = ensure_batch_dim(image_b)
+        a = ensure_batch_dim(A)
+        b = ensure_batch_dim(B)
 
-        # Get dimensions
-        batch_size = max(a.shape[0], b.shape[0])
-
-        # Resize images to match if needed
+        # Resize images to match if needed (use B's size as reference, like Nuke)
         if a.shape[1:3] != b.shape[1:3]:
-            target_h, target_w = max(a.shape[1], b.shape[1]), max(
-                a.shape[2], b.shape[2]
-            )
+            target_h, target_w = b.shape[1], b.shape[2]
             a = F.interpolate(
                 a.permute(0, 3, 1, 2),
                 size=(target_h, target_w),
                 mode="bilinear",
                 align_corners=False,
             ).permute(0, 2, 3, 1)
-            b = F.interpolate(
-                b.permute(0, 3, 1, 2),
-                size=(target_h, target_w),
-                mode="bilinear",
-                align_corners=False,
-            ).permute(0, 2, 3, 1)
 
-        # Extract alpha channels if they exist
+        # Extract RGB and alpha channels
+        # A = foreground
         if a.shape[3] >= 4:
             a_alpha = a[:, :, :, 3:4]
             a_rgb = a[:, :, :, :3]
         else:
             a_alpha = torch.ones_like(a[:, :, :, :1])
-            a_rgb = a
+            a_rgb = a[:, :, :, :3] if a.shape[3] >= 3 else a.repeat(1, 1, 1, 3)
 
+        # B = background
         if b.shape[3] >= 4:
             b_alpha = b[:, :, :, 3:4]
             b_rgb = b[:, :, :, :3]
         else:
             b_alpha = torch.ones_like(b[:, :, :, :1])
-            b_rgb = b
+            b_rgb = b[:, :, :, :3] if b.shape[3] >= 3 else b.repeat(1, 1, 1, 3)
 
-        # Apply blend mode
-        result_rgb = self._apply_blend_mode(a_rgb, b_rgb, operation)
-
-        # Composite with alpha based on operation
+        # Apply the merge operation
+        # All formulas follow Nuke/Porter-Duff conventions
         if operation == "over":
-            # Standard over operation: A over B
+            # A over B: A composited on top of B
+            # Formula: A + B * (1 - Aα)
+            result_rgb = a_rgb * a_alpha + b_rgb * (1 - a_alpha)
             result_alpha = a_alpha + b_alpha * (1 - a_alpha)
-            result_rgb = (
-                a_rgb * a_alpha + b_rgb * b_alpha * (1 - a_alpha)
-            ) / torch.clamp(result_alpha, min=1e-7)
+
         elif operation == "under":
-            # B under A (swap A and B)
+            # A under B: equivalent to B over A
+            # Formula: B + A * (1 - Bα)
+            result_rgb = b_rgb * b_alpha + a_rgb * (1 - b_alpha)
             result_alpha = b_alpha + a_alpha * (1 - b_alpha)
-            result_rgb = (
-                b_rgb * b_alpha + a_rgb * a_alpha * (1 - b_alpha)
-            ) / torch.clamp(result_alpha, min=1e-7)
-        elif operation == "in":
-            # A in B: show A where B has alpha
-            result_alpha = a_alpha * b_alpha
-            result_rgb = result_rgb * b_alpha
-        elif operation == "out":
-            # A out B: show A where B has no alpha
-            result_alpha = a_alpha * (1 - b_alpha)
-            result_rgb = result_rgb * (1 - b_alpha)
-        elif operation == "atop":
-            # A atop B: A over B, but only where B exists
+
+        elif operation == "plus":
+            # Additive blend: A + B
+            result_rgb = a_rgb + b_rgb
+            result_alpha = a_alpha + b_alpha
+
+        elif operation == "minus":
+            # Subtractive blend: B - A (Nuke convention)
+            result_rgb = b_rgb - a_rgb
             result_alpha = b_alpha
-            result_rgb = (
-                result_rgb * a_alpha + b_rgb * (1 - a_alpha)
-            ) * b_alpha
+
+        elif operation == "multiply":
+            # Multiply: A * B, composited over B
+            blended = a_rgb * b_rgb
+            result_rgb = blended * a_alpha + b_rgb * (1 - a_alpha)
+            result_alpha = a_alpha + b_alpha * (1 - a_alpha)
+
+        elif operation == "screen":
+            # Screen: 1 - (1-A) * (1-B), composited over B
+            blended = 1 - (1 - a_rgb) * (1 - b_rgb)
+            result_rgb = blended * a_alpha + b_rgb * (1 - a_alpha)
+            result_alpha = a_alpha + b_alpha * (1 - a_alpha)
+
+        elif operation == "overlay":
+            # Overlay blend mode
+            blended = torch.where(
+                b_rgb < 0.5,
+                2 * a_rgb * b_rgb,
+                1 - 2 * (1 - a_rgb) * (1 - b_rgb)
+            )
+            result_rgb = blended * a_alpha + b_rgb * (1 - a_alpha)
+            result_alpha = a_alpha + b_alpha * (1 - a_alpha)
+
+        elif operation == "soft_light":
+            # Soft light blend
+            blended = torch.where(
+                a_rgb < 0.5,
+                b_rgb - (1 - 2 * a_rgb) * b_rgb * (1 - b_rgb),
+                b_rgb + (2 * a_rgb - 1) * (torch.sqrt(b_rgb) - b_rgb)
+            )
+            result_rgb = blended * a_alpha + b_rgb * (1 - a_alpha)
+            result_alpha = a_alpha + b_alpha * (1 - a_alpha)
+
+        elif operation == "hard_light":
+            # Hard light blend
+            blended = torch.where(
+                a_rgb < 0.5,
+                2 * a_rgb * b_rgb,
+                1 - 2 * (1 - a_rgb) * (1 - b_rgb)
+            )
+            result_rgb = blended * a_alpha + b_rgb * (1 - a_alpha)
+            result_alpha = a_alpha + b_alpha * (1 - a_alpha)
+
+        elif operation == "color_dodge":
+            # Color dodge
+            blended = torch.where(
+                a_rgb >= 1,
+                torch.ones_like(b_rgb),
+                torch.clamp(b_rgb / (1 - a_rgb + 1e-7), 0, 1)
+            )
+            result_rgb = blended * a_alpha + b_rgb * (1 - a_alpha)
+            result_alpha = a_alpha + b_alpha * (1 - a_alpha)
+
+        elif operation == "color_burn":
+            # Color burn
+            blended = torch.where(
+                a_rgb <= 0,
+                torch.zeros_like(b_rgb),
+                1 - torch.clamp((1 - b_rgb) / (a_rgb + 1e-7), 0, 1)
+            )
+            result_rgb = blended * a_alpha + b_rgb * (1 - a_alpha)
+            result_alpha = a_alpha + b_alpha * (1 - a_alpha)
+
+        elif operation == "darken":
+            # Darken: min(A, B)
+            blended = torch.min(a_rgb, b_rgb)
+            result_rgb = blended * a_alpha + b_rgb * (1 - a_alpha)
+            result_alpha = a_alpha + b_alpha * (1 - a_alpha)
+
+        elif operation == "lighten":
+            # Lighten: max(A, B)
+            blended = torch.max(a_rgb, b_rgb)
+            result_rgb = blended * a_alpha + b_rgb * (1 - a_alpha)
+            result_alpha = a_alpha + b_alpha * (1 - a_alpha)
+
+        elif operation == "difference":
+            # Difference: |A - B|
+            blended = torch.abs(a_rgb - b_rgb)
+            result_rgb = blended * a_alpha + b_rgb * (1 - a_alpha)
+            result_alpha = a_alpha + b_alpha * (1 - a_alpha)
+
+        elif operation == "exclusion":
+            # Exclusion: A + B - 2*A*B
+            blended = a_rgb + b_rgb - 2 * a_rgb * b_rgb
+            result_rgb = blended * a_alpha + b_rgb * (1 - a_alpha)
+            result_alpha = a_alpha + b_alpha * (1 - a_alpha)
+
+        elif operation == "average":
+            # Average: (A + B) / 2
+            blended = (a_rgb + b_rgb) / 2
+            result_rgb = blended * a_alpha + b_rgb * (1 - a_alpha)
+            result_alpha = a_alpha + b_alpha * (1 - a_alpha)
+
+        elif operation == "divide":
+            # Divide: B / A
+            blended = torch.clamp(b_rgb / (a_rgb + 1e-7), 0, 1)
+            result_rgb = blended * a_alpha + b_rgb * (1 - a_alpha)
+            result_alpha = a_alpha + b_alpha * (1 - a_alpha)
+
+        elif operation == "min":
+            # Min: min(A, B)
+            blended = torch.min(a_rgb, b_rgb)
+            result_rgb = blended * a_alpha + b_rgb * (1 - a_alpha)
+            result_alpha = a_alpha + b_alpha * (1 - a_alpha)
+
+        elif operation == "max":
+            # Max: max(A, B)
+            blended = torch.max(a_rgb, b_rgb)
+            result_rgb = blended * a_alpha + b_rgb * (1 - a_alpha)
+            result_alpha = a_alpha + b_alpha * (1 - a_alpha)
+
+        elif operation == "hypot":
+            # Hypotenuse: sqrt(A² + B²)
+            blended = torch.clamp(torch.sqrt(a_rgb * a_rgb + b_rgb * b_rgb), 0, 1)
+            result_rgb = blended * a_alpha + b_rgb * (1 - a_alpha)
+            result_alpha = a_alpha + b_alpha * (1 - a_alpha)
+
+        # Porter-Duff operations
+        elif operation == "in":
+            # A in B: A masked by B's alpha
+            result_rgb = a_rgb * b_alpha
+            result_alpha = a_alpha * b_alpha
+
+        elif operation == "out":
+            # A out B: A where B is transparent
+            result_rgb = a_rgb * (1 - b_alpha)
+            result_alpha = a_alpha * (1 - b_alpha)
+
+        elif operation == "atop":
+            # A atop B: A where B exists, B elsewhere
+            result_rgb = a_rgb * a_alpha * b_alpha + b_rgb * (1 - a_alpha)
+            result_alpha = b_alpha
+
         elif operation == "xor":
             # A xor B: A and B where they don't overlap
+            result_rgb = a_rgb * (1 - b_alpha) + b_rgb * (1 - a_alpha)
             result_alpha = a_alpha * (1 - b_alpha) + b_alpha * (1 - a_alpha)
-            result_rgb = (
-                a_rgb * a_alpha * (1 - b_alpha) + 
-                b_rgb * b_alpha * (1 - a_alpha)
-            ) / torch.clamp(result_alpha, min=1e-7)
+
         elif operation == "mask":
-            # A masked by B: A where B has alpha
+            # Mask: Use A's color with A's alpha multiplied by B's alpha
+            result_rgb = a_rgb
             result_alpha = a_alpha * b_alpha
-            result_rgb = result_rgb
+
         elif operation == "stencil":
-            # A stenciled by B: A where B has no alpha
+            # Stencil: A where B is transparent
+            result_rgb = a_rgb
             result_alpha = a_alpha * (1 - b_alpha)
-            result_rgb = result_rgb
-        elif operation == "conjoint_over":
-            # Conjoint over: A over B with alpha clamping
-            fa = torch.clamp(a_alpha, 0, 1 - b_alpha + 1e-7)
-            result_alpha = fa + b_alpha
-            result_rgb = (
-                result_rgb * fa + b_rgb * b_alpha
-            ) / torch.clamp(result_alpha, min=1e-7)
-        elif operation == "disjoint_over":
-            # Disjoint over: A over B with alpha separation
-            fa = torch.clamp(a_alpha, 1 - b_alpha, 1)
-            result_alpha = fa + b_alpha
-            result_rgb = (
-                result_rgb * fa + b_rgb * b_alpha
-            ) / torch.clamp(result_alpha, min=1e-7)
+
+        elif operation == "matte":
+            # Matte: B with A's alpha as matte
+            result_rgb = b_rgb * a_alpha
+            result_alpha = b_alpha * a_alpha
+
         elif operation == "copy":
-            # Copy A: just return A
+            # Copy: Just A
+            result_rgb = a_rgb
             result_alpha = a_alpha
-            result_rgb = result_rgb
+
         else:
-            # For mathematical operations, use simple alpha blending
-            result_alpha = torch.max(a_alpha, b_alpha)
+            # Default to over
+            result_rgb = a_rgb * a_alpha + b_rgb * (1 - a_alpha)
+            result_alpha = a_alpha + b_alpha * (1 - a_alpha)
 
         # Apply mask if provided
         if mask is not None:
             mask = ensure_batch_dim(mask)
-            if mask.shape[1:3] != result_rgb.shape[1:3]:
-                mask = F.interpolate(
-                    mask.permute(0, 3, 1, 2),
+            # Handle mask dimensions
+            if len(mask.shape) == 4 and mask.shape[3] > 1:
+                mask_alpha = mask[:, :, :, :1]
+            elif len(mask.shape) == 3:
+                mask_alpha = mask.unsqueeze(-1)
+            else:
+                mask_alpha = mask
+
+            if mask_alpha.shape[1:3] != result_rgb.shape[1:3]:
+                mask_alpha = F.interpolate(
+                    mask_alpha.permute(0, 3, 1, 2),
                     size=result_rgb.shape[1:3],
                     mode="bilinear",
                     align_corners=False,
                 ).permute(0, 2, 3, 1)
 
-            # Use first channel of mask as alpha
-            mask_alpha = mask[:, :, :, :1]
-            result_rgb = a_rgb + (result_rgb - a_rgb) * mask_alpha * mix
-            result_alpha = a_alpha + (result_alpha - a_alpha) * mask_alpha * mix
+            # Blend between B (original) and result based on mask
+            effective_mix = mask_alpha * mix
+            result_rgb = b_rgb + (result_rgb - b_rgb) * effective_mix
+            result_alpha = b_alpha + (result_alpha - b_alpha) * effective_mix
         else:
-            # Apply mix factor
-            result_rgb = a_rgb + (result_rgb - a_rgb) * mix
-            result_alpha = a_alpha + (result_alpha - a_alpha) * mix
+            # Apply mix factor - blend between B and result
+            if mix < 1.0:
+                result_rgb = b_rgb + (result_rgb - b_rgb) * mix
+                result_alpha = b_alpha + (result_alpha - b_alpha) * mix
+
+        # Clamp results
+        result_rgb = torch.clamp(result_rgb, 0, 1)
+        result_alpha = torch.clamp(result_alpha, 0, 1)
 
         # Combine RGB and alpha
-        if a.shape[3] >= 4 or b.shape[3] >= 4:
+        if A.shape[-1] >= 4 or B.shape[-1] >= 4:
             result = torch.cat([result_rgb, result_alpha], dim=3)
         else:
             result = result_rgb
 
-        return (normalize_tensor(result),)
-
-    def _apply_blend_mode(self, a, b, mode):
-        """Apply specified blend mode to RGB channels"""
-        if mode == "over":
-            return b  # Will be handled in compositing section
-        elif mode == "under":
-            return a  # B under A (swap inputs)
-        elif mode == "plus":
-            return a + b
-        elif mode == "from":
-            return torch.clamp(a - b, 0, 1)
-        elif mode == "multiply":
-            return a * b
-        elif mode == "screen":
-            return 1 - (1 - a) * (1 - b)
-        elif mode == "overlay":
-            return torch.where(a < 0.5, 2 * a * b, 1 - 2 * (1 - a) * (1 - b))
-        elif mode == "soft_light":
-            return torch.where(
-                b < 0.5,
-                2 * a * b + a * a * (1 - 2 * b),
-                2 * a * (1 - b) + torch.sqrt(a) * (2 * b - 1),
-            )
-        elif mode == "hard_light":
-            return torch.where(b < 0.5, 2 * a * b, 1 - 2 * (1 - a) * (1 - b))
-        elif mode == "color_dodge":
-            return torch.where(
-                b >= 1, torch.ones_like(a), torch.clamp(a / (1 - b + 1e-7), 0, 1)
-            )
-        elif mode == "color_burn":
-            return torch.where(
-                b <= 0, torch.zeros_like(a), 1 - torch.clamp((1 - a) / (b + 1e-7), 0, 1)
-            )
-        elif mode == "darken":
-            return torch.min(a, b)
-        elif mode == "lighten":
-            return torch.max(a, b)
-        elif mode == "difference":
-            return torch.abs(a - b)
-        elif mode == "exclusion":
-            return a + b - 2 * a * b
-        elif mode == "average":
-            return (a + b) / 2
-        elif mode == "subtract":
-            return torch.clamp(a - b, 0, 1)
-        elif mode == "divide":
-            return torch.clamp(a / (b + 1e-7), 0, 1)
-        elif mode == "min":
-            return torch.min(a, b)
-        elif mode == "max":
-            return torch.max(a, b)
-        elif mode == "mask":
-            return a  # Will be handled with alpha compositing
-        elif mode == "stencil":
-            return a  # Will be handled with alpha compositing
-        elif mode == "hypot":
-            return torch.sqrt(a * a + b * b)
-        elif mode == "in":
-            return a  # Will be handled with alpha compositing
-        elif mode == "out":
-            return a  # Will be handled with alpha compositing
-        elif mode == "atop":
-            return a  # Will be handled with alpha compositing
-        elif mode == "xor":
-            return a  # Will be handled with alpha compositing
-        elif mode == "conjoint_over":
-            return a  # Will be handled with alpha compositing
-        elif mode == "disjoint_over":
-            return a  # Will be handled with alpha compositing
-        elif mode == "copy":
-            return a
-        else:
-            return b
+        return (result,)
 
 
 class NukeMix(NukeNodeBase):
@@ -333,13 +398,84 @@ class NukeMix(NukeNodeBase):
         return (normalize_tensor(result),)
 
 
+class NukeConstant(NukeNodeBase):
+    """
+    Constant node that generates a solid color image, similar to Nuke's Constant node.
+
+    Creates a solid color image with configurable RGBA values, width, and height.
+    The output can be used as a background, matte, or connected to any node expecting an image.
+    """
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "width": (
+                    "INT",
+                    {"default": 512, "min": 1, "max": 8192, "step": 1},
+                ),
+                "height": (
+                    "INT",
+                    {"default": 512, "min": 1, "max": 8192, "step": 1},
+                ),
+                "red": (
+                    "FLOAT",
+                    {"default": 0.0, "min": 0.0, "max": 1.0, "step": 0.01},
+                ),
+                "green": (
+                    "FLOAT",
+                    {"default": 0.0, "min": 0.0, "max": 1.0, "step": 0.01},
+                ),
+                "blue": (
+                    "FLOAT",
+                    {"default": 0.0, "min": 0.0, "max": 1.0, "step": 0.01},
+                ),
+                "alpha": (
+                    "FLOAT",
+                    {"default": 1.0, "min": 0.0, "max": 1.0, "step": 0.01},
+                ),
+            },
+            "optional": {
+                "batch_size": (
+                    "INT",
+                    {"default": 1, "min": 1, "max": 64, "step": 1},
+                ),
+            },
+        }
+
+    RETURN_TYPES = ("IMAGE",)
+    FUNCTION = "generate"
+    CATEGORY = "Nuke/Generate"
+
+    def generate(self, width, height, red, green, blue, alpha, batch_size=1):
+        """
+        Generate a solid color image with the specified RGBA values.
+
+        Returns:
+            Tensor of shape (batch_size, height, width, 4) with RGBA channels
+        """
+        # Create the constant color tensor
+        # Shape: (batch_size, height, width, 4) for RGBA
+        constant = torch.zeros((batch_size, height, width, 4), dtype=torch.float32)
+
+        # Set the color values
+        constant[:, :, :, 0] = red
+        constant[:, :, :, 1] = green
+        constant[:, :, :, 2] = blue
+        constant[:, :, :, 3] = alpha
+
+        return (constant,)
+
+
 # Node mappings
 NODE_CLASS_MAPPINGS = {
     "NukeMerge": NukeMerge,
     "NukeMix": NukeMix,
+    "NukeConstant": NukeConstant,
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
     "NukeMerge": "Nuke Merge",
     "NukeMix": "Nuke Mix",
+    "NukeConstant": "Nuke Constant",
 }
