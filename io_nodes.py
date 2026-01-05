@@ -213,41 +213,135 @@ def parse_frame_range(range_str: str) -> List[int]:
 # File Counter Utilities
 # ============================================================================
 
-def get_next_sequence_number(base_path: str, file_type: str) -> int:
-    """
-    Find the next available sequence number for a file.
+def _is_windows() -> bool:
+    """Check if running on Windows."""
+    import sys
+    return sys.platform.startswith('win') or sys.platform == 'cygwin' or sys.platform == 'msys'
 
-    Given a base path like "image" or "Test1/render", scans the directory
-    for existing files like "image1.exr", "image2.exr" and returns the next number.
+
+def _normalize_for_comparison(filename: str) -> str:
+    """
+    Normalize filename for comparison based on platform.
+    Windows filesystem is case-insensitive, Linux/Mac are case-sensitive.
+    """
+    if _is_windows():
+        return filename.lower()
+    return filename
+
+
+def _file_exists_case_aware(filepath: str) -> bool:
+    """
+    Check if file exists, handling case sensitivity properly for each platform.
+    On Windows (case-insensitive), os.path.exists() already handles this.
+    On Linux/Mac (case-sensitive), os.path.exists() is already correct.
+    """
+    # os.path.exists handles platform-specific case sensitivity correctly
+    return os.path.exists(filepath)
+
+
+def get_unique_filepath(filepath: str) -> str:
+    """
+    Get a unique filepath that doesn't overwrite any existing file.
+
+    Handles various naming patterns:
+    - image.png -> image1.png -> image2.png
+    - image_1.exr -> image_2.exr -> image_3.exr
+    - image-1.exr -> image-2.exr -> image-3.exr
+    - render.0001.exr -> render.0002.exr (frame sequences)
+
+    Works correctly on both Windows (case-insensitive) and Linux/Mac (case-sensitive).
 
     Args:
-        base_path: Base file path without extension
-        file_type: File extension (e.g., "exr", "png")
+        filepath: The desired output filepath
 
     Returns:
-        Next available sequence number (e.g., 3 if image1 and image2 exist)
+        A filepath that is guaranteed not to exist
     """
-    directory = os.path.dirname(base_path) or '.'
-    basename = os.path.basename(base_path)
+    # If file doesn't exist, use it as-is
+    if not _file_exists_case_aware(filepath):
+        return filepath
 
-    if not os.path.exists(directory):
-        return 1
+    directory = os.path.dirname(filepath) or '.'
+    filename = os.path.basename(filepath)
+    base, ext = os.path.splitext(filename)
 
-    # Pattern to match files like "basename1.ext", "basename2.ext", etc.
-    pattern = re.compile(rf'^{re.escape(basename)}(\d+)\.{re.escape(file_type)}$')
-
-    max_number = 0
+    # Build a set of existing filenames for efficient lookup
+    # Normalize for case-insensitive comparison on Windows
     try:
-        for filename in os.listdir(directory):
-            match = pattern.match(filename)
-            if match:
-                num = int(match.group(1))
-                max_number = max(max_number, num)
+        existing_files = set()
+        if os.path.isdir(directory):
+            for f in os.listdir(directory):
+                existing_files.add(_normalize_for_comparison(f))
     except (OSError, PermissionError):
-        # If we can't read the directory, start from 1
-        return 1
+        existing_files = set()
 
-    return max_number + 1
+    def _exists(name: str) -> bool:
+        """Check if a filename exists in the directory (case-aware)."""
+        normalized = _normalize_for_comparison(name)
+        if normalized in existing_files:
+            return True
+        # Double-check with filesystem (handles race conditions)
+        return _file_exists_case_aware(os.path.join(directory, name))
+
+    # Pattern 1: Check if base already ends with a separator and number (e.g., image_2, image-3)
+    # Match patterns like: name_123, name-123, name.123
+    separator_pattern = re.match(r'^(.+?)([_\-\.])(\d+)$', base)
+
+    if separator_pattern:
+        # File already has a separator+number pattern, increment it
+        prefix = separator_pattern.group(1)
+        separator = separator_pattern.group(2)
+        current_num = int(separator_pattern.group(3))
+
+        # Find next available number
+        num = current_num + 1
+        max_attempts = 100000
+        while num < current_num + max_attempts:
+            new_filename = f"{prefix}{separator}{num}{ext}"
+            if not _exists(new_filename):
+                return os.path.join(directory, new_filename)
+            num += 1
+
+        # Fallback: use timestamp
+        import time
+        timestamp = int(time.time() * 1000)
+        return os.path.join(directory, f"{prefix}{separator}{timestamp}{ext}")
+
+    # Pattern 2: Check if base ends with a number directly (e.g., image2, render001)
+    direct_number_pattern = re.match(r'^(.+?)(\d+)$', base)
+
+    if direct_number_pattern:
+        prefix = direct_number_pattern.group(1)
+        current_num = int(direct_number_pattern.group(2))
+
+        # Find next available number
+        num = current_num + 1
+        max_attempts = 100000
+        while num < current_num + max_attempts:
+            new_filename = f"{prefix}{num}{ext}"
+            if not _exists(new_filename):
+                return os.path.join(directory, new_filename)
+            num += 1
+
+        # Fallback: use timestamp
+        import time
+        timestamp = int(time.time() * 1000)
+        return os.path.join(directory, f"{prefix}{timestamp}{ext}")
+
+    # Pattern 3: No number in filename, start with 1
+    # Try appending number directly: image.png -> image1.png
+    num = 1
+    max_attempts = 100000
+    while num < max_attempts:
+        new_filename = f"{base}{num}{ext}"
+        if not _exists(new_filename):
+            return os.path.join(directory, new_filename)
+        num += 1
+
+    # Ultimate fallback: use timestamp
+    import time
+    timestamp = int(time.time() * 1000)
+    return os.path.join(directory, f"{base}_{timestamp}{ext}")
 
 
 # ============================================================================
@@ -787,7 +881,7 @@ class NukeWrite(NukeNodeBase):
                     "tooltip": "Number of digits for frame numbers (e.g., 4 = 0001, 0002...)"
                 }),
                 "auto_sequence": ("BOOLEAN", {
-                    "default": False,
+                    "default": True,
                     "tooltip": "Auto-increment filename (image1.png, image2.png...). If disabled, overwrites existing file."
                 }),
                 "create_directories": ("BOOLEAN", {"default": True}),
@@ -803,7 +897,7 @@ class NukeWrite(NukeNodeBase):
 
     def write_image(self, image, file_path, frame_start=1,
                     file_type="exr", bit_depth="16f", compression="dwaa",
-                    frame_padding=4, auto_sequence=False, create_directories=True, colorspace="raw"):
+                    frame_padding=4, auto_sequence=True, create_directories=True, colorspace="raw"):
         """Write image(s) to disk."""
 
         if not file_path:
@@ -851,17 +945,6 @@ class NukeWrite(NukeNodeBase):
             else:
                 pattern = file_path
 
-        # Handle auto_sequence mode
-        # Only applies when:
-        # 1. auto_sequence is enabled
-        # 2. No explicit frame pattern in path (not %04d or ####)
-        # 3. Saving single frame or first frame of batch
-        auto_sequence_number = None
-        if auto_sequence and not is_sequence:
-            # Get base path without extension for sequence numbering
-            base_for_sequence = os.path.splitext(file_path)[0]
-            auto_sequence_number = get_next_sequence_number(base_for_sequence, file_type)
-
         # Create output directory if needed
         if create_directories:
             output_dir = os.path.dirname(file_path)
@@ -874,22 +957,20 @@ class NukeWrite(NukeNodeBase):
             # Get frame number
             frame_num = frame_start + i
 
-            # Determine output path
-            if auto_sequence and auto_sequence_number is not None and not is_sequence:
-                # Auto-sequence mode: append sequence number to filename
-                base, ext = os.path.splitext(file_path)
-                seq_num = auto_sequence_number + i
-                output_path = f"{base}{seq_num}{ext}"
-            elif is_sequence or batch_size > 1:
-                if is_sequence:
-                    output_path = expand_frame_pattern(pattern, frame_num, padding)
-                else:
-                    # Auto-add frame number for batch using frame_padding
-                    base, ext = os.path.splitext(file_path)
-                    frame_str = str(frame_num).zfill(padding)
-                    output_path = f"{base}.{frame_str}{ext}"
+            # Determine output path - always add frame number like Nuke does
+            if is_sequence:
+                # Explicit frame pattern in path (e.g., %04d or ####)
+                output_path = expand_frame_pattern(pattern, frame_num, padding)
             else:
-                output_path = file_path
+                # No explicit pattern - add frame number with underscore separator
+                # e.g., test/image -> test/image_0001.exr (based on frame_start and frame_padding)
+                base, ext = os.path.splitext(file_path)
+                frame_str = str(frame_num).zfill(padding)
+                output_path = f"{base}_{frame_str}{ext}"
+
+            # Apply auto_sequence to avoid overwrites if enabled
+            if auto_sequence:
+                output_path = get_unique_filepath(output_path)
 
             # Get pixel data
             pixels = img[i].cpu().numpy()
