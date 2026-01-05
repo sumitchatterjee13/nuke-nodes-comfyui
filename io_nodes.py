@@ -243,11 +243,11 @@ def get_unique_filepath(filepath: str) -> str:
     """
     Get a unique filepath that doesn't overwrite any existing file.
 
-    Handles various naming patterns:
-    - image.png -> image1.png -> image2.png
+    Handles various naming patterns and preserves zero-padding:
+    - image_0001.exr -> image_0002.exr -> image_0003.exr (preserves padding)
     - image_1.exr -> image_2.exr -> image_3.exr
     - image-1.exr -> image-2.exr -> image-3.exr
-    - render.0001.exr -> render.0002.exr (frame sequences)
+    - image.png -> image1.png -> image2.png
 
     Works correctly on both Windows (case-insensitive) and Linux/Mac (case-sensitive).
 
@@ -283,21 +283,25 @@ def get_unique_filepath(filepath: str) -> str:
         # Double-check with filesystem (handles race conditions)
         return _file_exists_case_aware(os.path.join(directory, name))
 
-    # Pattern 1: Check if base already ends with a separator and number (e.g., image_2, image-3)
-    # Match patterns like: name_123, name-123, name.123
+    # Pattern 1: Check if base already ends with a separator and number (e.g., image_0001, image-3)
+    # Match patterns like: name_0001, name-123, name.123
     separator_pattern = re.match(r'^(.+?)([_\-\.])(\d+)$', base)
 
     if separator_pattern:
         # File already has a separator+number pattern, increment it
         prefix = separator_pattern.group(1)
         separator = separator_pattern.group(2)
-        current_num = int(separator_pattern.group(3))
+        num_str = separator_pattern.group(3)
+        current_num = int(num_str)
+        # Preserve the original padding (e.g., 0001 has padding of 4)
+        padding = len(num_str)
 
         # Find next available number
         num = current_num + 1
         max_attempts = 100000
         while num < current_num + max_attempts:
-            new_filename = f"{prefix}{separator}{num}{ext}"
+            # Use zfill to preserve padding
+            new_filename = f"{prefix}{separator}{str(num).zfill(padding)}{ext}"
             if not _exists(new_filename):
                 return os.path.join(directory, new_filename)
             num += 1
@@ -312,13 +316,17 @@ def get_unique_filepath(filepath: str) -> str:
 
     if direct_number_pattern:
         prefix = direct_number_pattern.group(1)
-        current_num = int(direct_number_pattern.group(2))
+        num_str = direct_number_pattern.group(2)
+        current_num = int(num_str)
+        # Preserve the original padding
+        padding = len(num_str)
 
         # Find next available number
         num = current_num + 1
         max_attempts = 100000
         while num < current_num + max_attempts:
-            new_filename = f"{prefix}{num}{ext}"
+            # Use zfill to preserve padding
+            new_filename = f"{prefix}{str(num).zfill(padding)}{ext}"
             if not _exists(new_filename):
                 return os.path.join(directory, new_filename)
             num += 1
