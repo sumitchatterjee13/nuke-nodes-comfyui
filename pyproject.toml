@@ -64,3 +64,12 @@ python_version = "3.8"
 warn_return_any = true
 warn_unused_configs = true
 disallow_untyped_defs = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+# Note: Due to relative imports in the package, run tests from the tests directory:
+# cd tests && python -m pytest test_colorspace_nodes.py -v --rootdir=.
+# Or run directly with Python: cd tests && python test_colorspace_nodes.py
