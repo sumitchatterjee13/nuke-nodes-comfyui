@@ -424,6 +424,10 @@ class NukeOCIODisplay(NukeNodeBase):
     Useful for converting scene-referred images to display-referred for viewing.
 
     Supports ACES 2.0 built-in configs (no external config files needed).
+
+    The 'invert' parameter allows round-tripping:
+    - forward: linear -> tonemapped (for viewing)
+    - inverse: tonemapped -> linear (to reverse a display transform)
     """
 
     @classmethod
@@ -448,6 +452,7 @@ class NukeOCIODisplay(NukeNodeBase):
                 "display": (displays, {"default": displays[0] if displays else "sRGB - Display"}),
                 "view": (views, {"default": views[0] if views else "ACES 2.0 - SDR Video"}),
                 "input_colorspace": (input_colorspaces, {"default": "ACEScg"}),
+                "invert": (["forward", "inverse"], {"default": "forward"}),
             },
         }
 
@@ -459,8 +464,13 @@ class NukeOCIODisplay(NukeNodeBase):
     def IS_CHANGED(cls, **kwargs):
         return float("nan")
 
-    def apply_display(self, image, config, display, view, input_colorspace):
-        """Apply display/view transform using OCIO."""
+    def apply_display(self, image, config, display, view, input_colorspace, invert="forward"):
+        """Apply display/view transform using OCIO.
+
+        Args:
+            invert: Direction of transform. "forward" applies the display transform
+                   (linear -> tonemapped), "inverse" reverses it (tonemapped -> linear).
+        """
 
         if not OCIO_AVAILABLE:
             print("[NukeOCIO] OpenColorIO not installed. Install with: pip install opencolorio")
@@ -480,7 +490,9 @@ class NukeOCIODisplay(NukeNodeBase):
             transform.setDisplay(display)
             transform.setView(view)
 
-            processor = config.getProcessor(transform)
+            # Set transform direction
+            direction = OCIO.TRANSFORM_DIR_INVERSE if invert == "inverse" else OCIO.TRANSFORM_DIR_FORWARD
+            processor = config.getProcessor(transform, direction)
             cpu_processor = processor.getDefaultCPUProcessor()
 
             # Ensure batch dimension
