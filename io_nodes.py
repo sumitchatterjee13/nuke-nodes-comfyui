@@ -80,6 +80,9 @@ def parse_frame_pattern(filepath: str) -> Tuple[str, Optional[str], int]:
         - frame_spec: original frame specifier or None
         - padding: number of digits for padding
     """
+    # Normalize path separators for consistent handling
+    filepath = filepath.replace('\\', '/')
+
     # Check for %0Nd pattern
     match = re.search(r'%(\d*)d', filepath)
     if match:
@@ -145,6 +148,9 @@ def detect_sequence(filepath: str) -> Tuple[str, List[int], int]:
         - frames: List of available frame numbers
         - padding: Digit padding
     """
+    # Normalize path separators
+    filepath = filepath.replace('\\', '/')
+
     pattern, frame_spec, padding = parse_frame_pattern(filepath)
 
     if frame_spec is None or padding == 0:
@@ -158,10 +164,27 @@ def detect_sequence(filepath: str) -> Tuple[str, List[int], int]:
     glob_pattern = re.sub(r'%\d*d', '*', pattern)
     glob_pattern = re.sub(r'#+', '*', glob_pattern)
 
+    print(f"[NukeRead] Searching for sequence with pattern: {glob_pattern}")
+
     matching_files = glob.glob(glob_pattern)
 
     if not matching_files:
+        print(f"[NukeRead] No files found matching pattern: {glob_pattern}")
+        # Check if directory exists
+        directory = os.path.dirname(glob_pattern)
+        if os.path.exists(directory):
+            print(f"[NukeRead] Directory exists: {directory}")
+            # List files in directory for debugging
+            try:
+                files = os.listdir(directory)
+                print(f"[NukeRead] Files in directory: {files[:10]}...")  # Show first 10
+            except Exception as e:
+                print(f"[NukeRead] Error listing directory: {e}")
+        else:
+            print(f"[NukeRead] Directory does not exist: {directory}")
         return pattern, [], padding
+
+    print(f"[NukeRead] Found {len(matching_files)} files in sequence")
 
     # Extract frame numbers
     frames = []
@@ -673,6 +696,219 @@ def get_supported_formats() -> Dict[str, List[str]]:
 
 
 # ============================================================================
+# Preview Utilities
+# ============================================================================
+
+def resize_image_oiio(img_np: np.ndarray, max_size: int = 256) -> np.ndarray:
+    """
+    Resize image using OpenImageIO's ImageBufAlgo.
+
+    Args:
+        img_np: Image as numpy array (H, W, C)
+        max_size: Maximum dimension
+
+    Returns:
+        Resized image as numpy array
+    """
+    if not OIIO_AVAILABLE:
+        # Fallback to simple numpy resize (nearest neighbor)
+        height, width = img_np.shape[:2]
+        if width <= max_size and height <= max_size:
+            return img_np
+
+        if width > height:
+            new_width = max_size
+            new_height = int(height * max_size / width)
+        else:
+            new_height = max_size
+            new_width = int(width * max_size / height)
+
+        # Simple nearest neighbor resize
+        import cv2 as cv2_resize
+        if CV2_AVAILABLE:
+            return cv2_resize.resize(img_np, (new_width, new_height), interpolation=cv2_resize.INTER_LANCZOS4)
+        else:
+            # Very basic resize using numpy
+            y_indices = np.linspace(0, height - 1, new_height).astype(int)
+            x_indices = np.linspace(0, width - 1, new_width).astype(int)
+            return img_np[np.ix_(y_indices, x_indices)]
+
+    height, width = img_np.shape[:2]
+    channels = img_np.shape[2] if len(img_np.shape) > 2 else 1
+
+    if width <= max_size and height <= max_size:
+        return img_np
+
+    # Calculate new dimensions maintaining aspect ratio
+    if width > height:
+        new_width = max_size
+        new_height = int(height * max_size / width)
+    else:
+        new_height = max_size
+        new_width = int(width * max_size / height)
+
+    # Create ImageBuf from numpy array
+    spec = oiio.ImageSpec(width, height, channels, oiio.FLOAT)
+    src_buf = oiio.ImageBuf(spec)
+    src_buf.set_pixels(oiio.ROI(0, width, 0, height, 0, 1, 0, channels), img_np.astype(np.float32))
+
+    # Resize using OIIO
+    dst_buf = oiio.ImageBufAlgo.resize(src_buf, roi=oiio.ROI(0, new_width, 0, new_height, 0, 1, 0, channels))
+
+    # Get pixels back
+    resized = dst_buf.get_pixels(oiio.FLOAT)
+    return resized.reshape(new_height, new_width, channels)
+
+
+def save_preview_oiio(img_np: np.ndarray, filepath: str) -> bool:
+    """
+    Save preview image using OpenImageIO.
+
+    Args:
+        img_np: Image as numpy array (H, W, C) in 0-1 range float or 0-255 uint8
+        filepath: Output filepath (should be .png or .jpg)
+
+    Returns:
+        True if successful
+    """
+    if not OIIO_AVAILABLE:
+        # Fallback to OpenCV
+        if CV2_AVAILABLE:
+            # Ensure uint8
+            if img_np.dtype != np.uint8:
+                img_np = np.clip(img_np * 255, 0, 255).astype(np.uint8)
+            # Convert RGB to BGR for OpenCV
+            if len(img_np.shape) == 3 and img_np.shape[2] >= 3:
+                img_np = cv2.cvtColor(img_np, cv2.COLOR_RGB2BGR)
+            return cv2.imwrite(filepath, img_np)
+        return False
+
+    height, width = img_np.shape[:2]
+    channels = img_np.shape[2] if len(img_np.shape) > 2 else 1
+
+    # Convert to uint8 for PNG output
+    if img_np.dtype == np.float32 or img_np.dtype == np.float64:
+        pixels_out = np.clip(img_np * 255, 0, 255).astype(np.uint8)
+    else:
+        pixels_out = img_np.astype(np.uint8)
+
+    # Create spec and output
+    spec = oiio.ImageSpec(width, height, channels, oiio.UINT8)
+    spec.attribute("png:compressionLevel", 6)
+
+    out = oiio.ImageOutput.create(filepath)
+    if out is None:
+        return False
+
+    if not out.open(filepath, spec):
+        return False
+
+    if not out.write_image(pixels_out):
+        out.close()
+        return False
+
+    out.close()
+    return True
+
+
+def create_preview_images(images: torch.Tensor, max_size: int = 256, max_frames: int = 1000) -> list:
+    """
+    Create preview images for display in the node UI.
+    Uses OpenImageIO for image processing and saving.
+
+    Args:
+        images: Tensor of images (B, H, W, C)
+        max_size: Maximum dimension for preview thumbnails
+        max_frames: Maximum number of frames to include in preview
+
+    Returns:
+        List of preview dictionaries for ComfyUI UI
+    """
+    previews = []
+    batch_size = images.shape[0]
+
+    # Limit number of frames for preview
+    frame_step = max(1, batch_size // max_frames)
+
+    # Get temp directory
+    temp_dir = folder_paths.get_temp_directory()
+    os.makedirs(temp_dir, exist_ok=True)
+
+    for i in range(0, batch_size, frame_step):
+        if len(previews) >= max_frames:
+            break
+
+        img_tensor = images[i]
+        img_np = img_tensor.cpu().numpy()
+
+        # Ensure we have 3 channels (RGB)
+        if img_np.shape[-1] == 4:
+            # RGBA -> RGB (discard alpha for preview)
+            img_np = img_np[:, :, :3]
+        elif img_np.shape[-1] == 1:
+            # Grayscale -> RGB
+            img_np = np.concatenate([img_np, img_np, img_np], axis=-1)
+
+        # Resize using OIIO
+        img_np = resize_image_oiio(img_np, max_size)
+
+        # Save to temporary file
+        preview_filename = f"nuke_preview_{id(images)}_{i}.png"
+        preview_path = os.path.join(temp_dir, preview_filename)
+
+        if save_preview_oiio(img_np, preview_path):
+            previews.append({
+                "filename": preview_filename,
+                "subfolder": "",
+                "type": "temp",
+                "frame": i + 1
+            })
+
+    return previews
+
+
+def save_preview_to_temp(img_np: np.ndarray, suffix: str = "") -> dict:
+    """
+    Save a single numpy image to temp directory for preview.
+    Uses OpenImageIO for image processing and saving.
+
+    Args:
+        img_np: Image as numpy array (H, W, C) in 0-1 range
+        suffix: Optional suffix for filename
+
+    Returns:
+        Preview dictionary for ComfyUI UI
+    """
+    import uuid
+
+    # Ensure we have 3 channels (RGB)
+    if len(img_np.shape) == 2:
+        img_np = np.stack([img_np, img_np, img_np], axis=-1)
+    elif img_np.shape[-1] == 4:
+        img_np = img_np[:, :, :3]
+    elif img_np.shape[-1] == 1:
+        img_np = np.concatenate([img_np, img_np, img_np], axis=-1)
+
+    # Resize for preview (max 256px)
+    img_np = resize_image_oiio(img_np, max_size=256)
+
+    # Save to temp directory
+    temp_dir = folder_paths.get_temp_directory()
+    os.makedirs(temp_dir, exist_ok=True)
+    preview_filename = f"nuke_preview_{uuid.uuid4().hex[:8]}{suffix}.png"
+    preview_path = os.path.join(temp_dir, preview_filename)
+
+    if save_preview_oiio(img_np, preview_path):
+        return {
+            "filename": preview_filename,
+            "subfolder": "",
+            "type": "temp"
+        }
+
+    return None
+
+
+# ============================================================================
 # ComfyUI Nodes
 # ============================================================================
 
@@ -685,6 +921,7 @@ class NukeRead(NukeNodeBase):
     - Frame pattern matching (%04d, ####)
     - Frame range specification (first/last frame)
     - Wide format support via OpenImageIO
+    - Optional thumbnail preview
 
     Supported formats: EXR, TIFF, PNG, JPEG, DPX, HDR, TGA, BMP, and more.
     """
@@ -706,6 +943,10 @@ class NukeRead(NukeNodeBase):
                 }),
             },
             "optional": {
+                "load_as_sequence": ("BOOLEAN", {
+                    "default": True,
+                    "tooltip": "Treat path as image sequence (enable for patterns like ####, %04d)"
+                }),
                 "first_frame": ("INT", {
                     "default": 1,
                     "min": -999999,
@@ -721,32 +962,44 @@ class NukeRead(NukeNodeBase):
                 "frame_mode": (["single", "range", "all"], {"default": "single"}),
                 "missing_frames": (["error", "black", "hold", "nearest"], {"default": "black"}),
                 "colorspace": (["raw", "sRGB", "linear", "ACEScg"], {"default": "raw"}),
+                "show_preview": ("BOOLEAN", {"default": True, "tooltip": "Show thumbnail preview in node"}),
             },
         }
 
     RETURN_TYPES = ("IMAGE",)
     FUNCTION = "read_image"
     CATEGORY = "Nuke/IO"
+    OUTPUT_NODE = True
 
     @classmethod
     def IS_CHANGED(cls, **kwargs):
         return float("nan")
 
-    def read_image(self, file_path, frame, first_frame=1, last_frame=1,
-                   frame_mode="single", missing_frames="black", colorspace="raw"):
+    def read_image(self, file_path, frame, load_as_sequence=True, first_frame=1, last_frame=1,
+                   frame_mode="single", missing_frames="black", colorspace="raw",
+                   show_preview=True):
         """Read image(s) from disk."""
 
         if not file_path:
             print("[NukeRead] No file path specified")
             # Return black image
-            return (torch.zeros((1, 512, 512, 3)),)
+            result = torch.zeros((1, 512, 512, 3))
+            return {"ui": {"images": []}, "result": (result,)}
 
         # Expand environment variables and user home
         file_path = os.path.expandvars(os.path.expanduser(file_path))
 
+        print(f"[NukeRead] Loading path: {file_path}")
+        print(f"[NukeRead] Load as sequence: {load_as_sequence}")
+
         # Parse frame pattern
         pattern, frame_spec, padding = parse_frame_pattern(file_path)
-        is_sequence = frame_spec is not None and padding > 0
+        is_sequence = load_as_sequence and (frame_spec is not None and padding > 0)
+
+        if frame_spec and padding > 0:
+            print(f"[NukeRead] Detected pattern: {pattern}, padding: {padding}")
+        else:
+            print(f"[NukeRead] No sequence pattern detected, treating as single file")
 
         # Determine frames to load
         if frame_mode == "single":
@@ -831,7 +1084,13 @@ class NukeRead(NukeNodeBase):
 
         result = torch.from_numpy(result)
 
-        return (result,)
+        # Create preview if enabled
+        ui_images = []
+        if show_preview and result.shape[0] > 0:
+            ui_images = create_preview_images(result)
+
+        # Return UI data
+        return {"ui": {"images": ui_images}, "result": (result,)}
 
 
 class NukeWrite(NukeNodeBase):
@@ -844,6 +1103,7 @@ class NukeWrite(NukeNodeBase):
     - Multiple file formats with format-specific options
     - Bit depth control (8, 16, 16f, 32f)
     - EXR compression options
+    - Optional thumbnail preview
 
     Supported formats: EXR, TIFF, PNG, JPEG, DPX, HDR, TGA, BMP, and more.
     """
@@ -894,6 +1154,7 @@ class NukeWrite(NukeNodeBase):
                 }),
                 "create_directories": ("BOOLEAN", {"default": True}),
                 "colorspace": (["raw", "sRGB", "linear", "ACEScg"], {"default": "raw"}),
+                "show_preview": ("BOOLEAN", {"default": True, "tooltip": "Show thumbnail preview in node"}),
             },
         }
 
@@ -905,12 +1166,13 @@ class NukeWrite(NukeNodeBase):
 
     def write_image(self, image, file_path, frame_start=1,
                     file_type="exr", bit_depth="16f", compression="dwaa",
-                    frame_padding=4, auto_sequence=True, create_directories=True, colorspace="raw"):
+                    frame_padding=4, auto_sequence=True, create_directories=True, colorspace="raw",
+                    show_preview=True):
         """Write image(s) to disk."""
 
         if not file_path:
             print("[NukeWrite] No file path specified")
-            return (image, "")
+            return {"ui": {"images": []}, "result": (image, "")}
 
         # Ensure batch dimension
         img = ensure_batch_dim(image)
@@ -1013,7 +1275,12 @@ class NukeWrite(NukeNodeBase):
         # Return paths as string
         paths_str = "\n".join(written_paths)
 
-        return (image, paths_str)
+        # Create preview if enabled
+        ui_images = []
+        if show_preview and image.shape[0] > 0:
+            ui_images = create_preview_images(image)
+
+        return {"ui": {"images": ui_images}, "result": (image, paths_str)}
 
 
 class NukeReadInfo(NukeNodeBase):
