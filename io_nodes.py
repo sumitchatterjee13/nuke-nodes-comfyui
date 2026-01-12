@@ -525,6 +525,9 @@ def write_image_oiio(filepath: str, pixels: np.ndarray,
             format_type = oiio.UINT16
             pixels_out = (np.clip(pixels, 0, 1) * 65535).astype(np.uint16)
 
+        # Ensure array is contiguous in memory for OIIO
+        pixels_out = np.ascontiguousarray(pixels_out)
+
         # Create spec
         spec = oiio.ImageSpec(width, height, channels, format_type)
 
@@ -750,7 +753,9 @@ def resize_image_oiio(img_np: np.ndarray, max_size: int = 256) -> np.ndarray:
     # Create ImageBuf from numpy array
     spec = oiio.ImageSpec(width, height, channels, oiio.FLOAT)
     src_buf = oiio.ImageBuf(spec)
-    src_buf.set_pixels(oiio.ROI(0, width, 0, height, 0, 1, 0, channels), img_np.astype(np.float32))
+    # Ensure array is contiguous in memory for OIIO
+    pixels_contiguous = np.ascontiguousarray(img_np.astype(np.float32))
+    src_buf.set_pixels(oiio.ROI(0, width, 0, height, 0, 1, 0, channels), pixels_contiguous)
 
     # Resize using OIIO
     dst_buf = oiio.ImageBufAlgo.resize(src_buf, roi=oiio.ROI(0, new_width, 0, new_height, 0, 1, 0, channels))
@@ -791,6 +796,9 @@ def save_preview_oiio(img_np: np.ndarray, filepath: str) -> bool:
         pixels_out = np.clip(img_np * 255, 0, 255).astype(np.uint8)
     else:
         pixels_out = img_np.astype(np.uint8)
+
+    # Ensure array is contiguous in memory for OIIO
+    pixels_out = np.ascontiguousarray(pixels_out)
 
     # Create spec and output
     spec = oiio.ImageSpec(width, height, channels, oiio.UINT8)
