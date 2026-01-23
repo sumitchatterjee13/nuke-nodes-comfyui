@@ -3,8 +3,19 @@
  * Handles displaying animated image sequence previews for NukeRead and NukeWrite nodes
  */
 
-import { app } from "../../scripts/app.js";
-import { api } from "../../scripts/api.js";
+// Use new ComfyUI API with fallback for older versions
+let app, api;
+if (window?.comfyAPI?.app && window?.comfyAPI?.api) {
+    // New API (ComfyUI frontend v1.28+)
+    app = window.comfyAPI.app;
+    api = window.comfyAPI.api;
+} else {
+    // Fallback for older ComfyUI versions
+    const appModule = await import("../../scripts/app.js");
+    const apiModule = await import("../../scripts/api.js");
+    app = appModule.app;
+    api = apiModule.api;
+}
 
 // Node types that support preview
 const PREVIEW_NODE_TYPES = ["NukeRead", "NukeWrite"];
