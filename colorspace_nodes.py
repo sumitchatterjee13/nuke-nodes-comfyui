@@ -640,15 +640,222 @@ class NukeOCIOInfo(NukeNodeBase):
             return (f"Error reading config: {e}",)
 
 
+# ---- OCIOFileTransform LUT support ----
+
+# LUT directory (shared with VectorField)
+from pathlib import Path as _Path
+_MODULE_DIR = _Path(__file__).parent
+_LUTS_DIR = _MODULE_DIR / "luts"
+
+# Supported LUT formats for OCIO FileTransform
+_OCIO_LUT_EXTENSIONS = {
+    ".3dl", ".ccc", ".cc", ".csp", ".cube", ".lut",
+    ".spi1d", ".spi3d", ".spimtx", ".cub", ".vf",
+}
+
+
+def _get_available_ocio_luts() -> List[str]:
+    """Scan the luts directory for OCIO-compatible LUT files."""
+    if not _LUTS_DIR.exists():
+        _LUTS_DIR.mkdir(parents=True, exist_ok=True)
+        return ["No LUTs found"]
+
+    lut_files = []
+    for file in _LUTS_DIR.iterdir():
+        if file.is_file() and file.suffix.lower() in _OCIO_LUT_EXTENSIONS:
+            lut_files.append(file.name)
+
+    if not lut_files:
+        return ["No LUTs found"]
+
+    return sorted(lut_files)
+
+
+# OCIO interpolation mapping
+_OCIO_INTERPOLATION = {
+    "default": "INTERP_DEFAULT",
+    "nearest": "INTERP_NEAREST",
+    "linear": "INTERP_LINEAR",
+    "tetrahedral": "INTERP_TETRAHEDRAL",
+    "best": "INTERP_BEST",
+}
+
+
+class NukeOCIOFileTransform(NukeNodeBase):
+    """
+    OCIO File Transform node - loads and applies LUT files via OpenColorIO.
+
+    Similar to Nuke's OCIOFileTransform node, this uses OCIO's FileTransform
+    to apply color transforms from LUT files. Supports forward and inverse
+    directions, multiple interpolation modes, and a mix slider.
+
+    Supported formats:
+    - .cube (Resolve, Adobe)
+    - .3dl (Autodesk Flame, Lustre)
+    - .csp (Cinespace)
+    - .spi1d / .spi3d / .spimtx (Sony Pictures Imageworks)
+    - .lut (Houdini)
+    - .cub (Truelight)
+    - .vf (Nuke)
+    - .ccc / .cc (ASC CDL)
+
+    Place LUT files in the 'luts' folder within the nuke-nodes package.
+    """
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        lut_files = _get_available_ocio_luts()
+
+        return {
+            "required": {
+                "image": ("IMAGE",),
+                "lut_file": (lut_files, {
+                    "default": lut_files[0] if lut_files else "No LUTs found",
+                }),
+                "direction": (["forward", "inverse"], {"default": "forward"}),
+                "interpolation": (["default", "nearest", "linear", "tetrahedral", "best"], {
+                    "default": "default",
+                }),
+                "mix": ("FLOAT", {
+                    "default": 1.0,
+                    "min": 0.0,
+                    "max": 1.0,
+                    "step": 0.01,
+                }),
+            },
+            "optional": {
+                "custom_lut_path": ("STRING", {
+                    "default": "",
+                    "multiline": False,
+                    "placeholder": "Optional: absolute path to a LUT file",
+                }),
+            },
+        }
+
+    RETURN_TYPES = ("IMAGE",)
+    FUNCTION = "apply_file_transform"
+    CATEGORY = "Nuke/Color"
+
+    @classmethod
+    def IS_CHANGED(cls, **kwargs):
+        return float("nan")
+
+    def apply_file_transform(self, image, lut_file, direction="forward",
+                             interpolation="default", mix=1.0,
+                             custom_lut_path=""):
+        """Apply an OCIO FileTransform LUT to the input image."""
+
+        if not OCIO_AVAILABLE:
+            print("[NukeOCIOFileTransform] OpenColorIO not installed. "
+                  "Install with: pip install opencolorio")
+            return (image,)
+
+        # Determine LUT file path
+        if custom_lut_path and os.path.exists(custom_lut_path):
+            lut_path = custom_lut_path
+        elif lut_file and lut_file != "No LUTs found":
+            lut_path = str(_LUTS_DIR / lut_file)
+        else:
+            print("[NukeOCIOFileTransform] No LUT file specified")
+            return (image,)
+
+        if not os.path.exists(lut_path):
+            print(f"[NukeOCIOFileTransform] LUT file not found: {lut_path}")
+            return (image,)
+
+        try:
+            # Build OCIO FileTransform
+            file_transform = OCIO.FileTransform()
+            file_transform.setSrc(lut_path)
+
+            # Set interpolation
+            interp_name = _OCIO_INTERPOLATION.get(interpolation, "INTERP_DEFAULT")
+            interp_value = getattr(OCIO, interp_name, OCIO.INTERP_DEFAULT)
+            file_transform.setInterpolation(interp_value)
+
+            # Set direction
+            ocio_direction = (OCIO.TRANSFORM_DIR_INVERSE
+                              if direction == "inverse"
+                              else OCIO.TRANSFORM_DIR_FORWARD)
+
+            # Create a minimal config that can process the FileTransform
+            config = OCIO.Config.CreateRaw()
+            processor = config.getProcessor(file_transform, ocio_direction)
+            cpu_processor = processor.getDefaultCPUProcessor()
+
+            # Process batch
+            img = ensure_batch_dim(image)
+            batch_size = img.shape[0]
+
+            results = []
+            for i in range(batch_size):
+                img_np = img[i].cpu().numpy().astype(np.float32)
+                height, width = img_np.shape[:2]
+                channels = img_np.shape[2] if len(img_np.shape) > 2 else 1
+
+                # Separate alpha
+                if channels == 4:
+                    rgb = img_np[:, :, :3].copy()
+                    alpha = img_np[:, :, 3:4].copy()
+                elif channels >= 3:
+                    rgb = img_np[:, :, :3].copy()
+                    alpha = None
+                else:
+                    rgb = np.stack([img_np[:, :, 0]] * 3, axis=-1)
+                    alpha = None
+
+                # Apply OCIO transform
+                rgb_flat = rgb.reshape(-1, 3)
+
+                img_desc = OCIO.PackedImageDesc(
+                    rgb_flat,
+                    width,
+                    height,
+                    3,
+                    OCIO.BIT_DEPTH_F32,
+                    rgb_flat.strides[1],
+                    rgb_flat.strides[0],
+                    width * rgb_flat.strides[0],
+                )
+
+                cpu_processor.apply(img_desc)
+
+                rgb_transformed = rgb_flat.reshape(height, width, 3)
+
+                # Apply mix
+                if mix < 1.0:
+                    rgb_original = img_np[:, :, :3]
+                    rgb_transformed = rgb_original + mix * (rgb_transformed - rgb_original)
+
+                # Recombine alpha
+                if alpha is not None:
+                    result = np.concatenate([rgb_transformed, alpha], axis=-1)
+                else:
+                    result = rgb_transformed
+
+                results.append(result)
+
+            result_np = np.stack(results, axis=0)
+            result = torch.from_numpy(result_np).to(image.device)
+
+            return (result,)
+
+        except Exception as e:
+            print(f"[NukeOCIOFileTransform] Error applying transform: {e}")
+            return (image,)
+
+
 # Node mappings
 NODE_CLASS_MAPPINGS = {
     "NukeOCIOColorSpace": NukeOCIOColorSpace,
     "NukeOCIODisplay": NukeOCIODisplay,
     "NukeOCIOInfo": NukeOCIOInfo,
+    "NukeOCIOFileTransform": NukeOCIOFileTransform,
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
     "NukeOCIOColorSpace": "Nuke OCIO ColorSpace",
     "NukeOCIODisplay": "Nuke OCIO Display",
     "NukeOCIOInfo": "Nuke OCIO Info",
+    "NukeOCIOFileTransform": "Nuke OCIO FileTransform",
 }

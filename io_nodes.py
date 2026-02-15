@@ -544,6 +544,13 @@ def write_image_oiio(filepath: str, pixels: np.ndarray,
                 spec.attribute("compression", "none")
             elif compression in ["lzw", "zip", "deflate"]:
                 spec.attribute("compression", compression)
+        elif ext in ['.webp']:
+            # WebP only supports 8-bit, force conversion
+            format_type = oiio.UINT8
+            pixels_out = (np.clip(pixels, 0, 1) * 255).astype(np.uint8)
+            pixels_out = np.ascontiguousarray(pixels_out)
+            spec = oiio.ImageSpec(width, height, channels, format_type)
+            spec.attribute("webp:quality", 90)
 
         # Add metadata
         if metadata:
@@ -1145,7 +1152,7 @@ class NukeWrite(NukeNodeBase):
             "optional": {
                 "file_type": ([
                     "exr", "tiff", "png", "jpg", "dpx",
-                    "hdr", "tga", "bmp"
+                    "hdr", "tga", "bmp", "webp"
                 ], {"default": "exr"}),
                 "bit_depth": (bit_depths, {"default": "16f"}),
                 "compression": (exr_compressions, {"default": "dwaa"}),
