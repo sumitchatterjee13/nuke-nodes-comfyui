@@ -1273,10 +1273,12 @@ class NukeWrite(NukeNodeBase):
                                  np.power((pixels + 0.055) / 1.055, 2.4))
 
             # Prepare metadata
+            # RAW: do not write any colorspace/gamma tagging into PNGs (or other formats)
             metadata = {
                 "Software": "ComfyUI Nuke Nodes",
-                "oiio:ColorSpace": colorspace if colorspace != "raw" else "linear",
             }
+            if colorspace != "raw":
+                metadata["oiio:ColorSpace"] = colorspace
 
             # Write the image
             success = write_image(output_path, pixels, bit_depth, compression, metadata)
