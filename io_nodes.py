@@ -40,6 +40,7 @@ from .utils import NukeNodeBase, ensure_batch_dim, normalize_tensor
 OIIO_AVAILABLE = False
 try:
     import OpenImageIO as oiio
+
     OIIO_AVAILABLE = True
 except ImportError:
     oiio = None
@@ -48,6 +49,7 @@ except ImportError:
 CV2_AVAILABLE = False
 try:
     import cv2
+
     CV2_AVAILABLE = True
 except ImportError:
     cv2 = None
@@ -56,6 +58,7 @@ except ImportError:
 PIL_AVAILABLE = False
 try:
     from PIL import Image as PILImage
+
     PIL_AVAILABLE = True
 except ImportError:
     PILImage = None
@@ -64,6 +67,7 @@ except ImportError:
 # ============================================================================
 # Sequence Pattern Utilities
 # ============================================================================
+
 
 def parse_frame_pattern(filepath: str) -> Tuple[str, Optional[str], int]:
     """
@@ -81,30 +85,30 @@ def parse_frame_pattern(filepath: str) -> Tuple[str, Optional[str], int]:
         - padding: number of digits for padding
     """
     # Normalize path separators for consistent handling
-    filepath = filepath.replace('\\', '/')
+    filepath = filepath.replace("\\", "/")
 
     # Check for %0Nd pattern
-    match = re.search(r'%(\d*)d', filepath)
+    match = re.search(r"%(\d*)d", filepath)
     if match:
         padding = int(match.group(1)) if match.group(1) else 4
         return filepath, match.group(0), padding
 
     # Check for #### pattern
-    match = re.search(r'(#+)', filepath)
+    match = re.search(r"(#+)", filepath)
     if match:
         hashes = match.group(1)
         padding = len(hashes)
-        pattern = filepath.replace(hashes, f'%0{padding}d')
+        pattern = filepath.replace(hashes, f"%0{padding}d")
         return pattern, hashes, padding
 
     # Check for frame number in filename (e.g., image.0001.exr)
     # Match number before extension
-    match = re.search(r'(\d+)(\.[^.]+)$', filepath)
+    match = re.search(r"(\d+)(\.[^.]+)$", filepath)
     if match:
         frame_str = match.group(1)
         padding = len(frame_str)
         ext = match.group(2)
-        base = filepath[:match.start()]
+        base = filepath[: match.start()]
         pattern = f"{base}%0{padding}d{ext}"
         return pattern, frame_str, padding
 
@@ -124,12 +128,12 @@ def expand_frame_pattern(pattern: str, frame: int, padding: int = 4) -> str:
         Expanded filename
     """
     # Handle %0Nd pattern
-    if '%' in pattern:
+    if "%" in pattern:
         return pattern % frame
 
     # Handle #### pattern
-    if '#' in pattern:
-        hashes = re.search(r'#+', pattern).group(0)
+    if "#" in pattern:
+        hashes = re.search(r"#+", pattern).group(0)
         return pattern.replace(hashes, str(frame).zfill(len(hashes)))
 
     return pattern
@@ -149,7 +153,7 @@ def detect_sequence(filepath: str) -> Tuple[str, List[int], int]:
         - padding: Digit padding
     """
     # Normalize path separators
-    filepath = filepath.replace('\\', '/')
+    filepath = filepath.replace("\\", "/")
 
     pattern, frame_spec, padding = parse_frame_pattern(filepath)
 
@@ -161,8 +165,8 @@ def detect_sequence(filepath: str) -> Tuple[str, List[int], int]:
 
     # Find all matching files
     # Convert pattern to glob pattern
-    glob_pattern = re.sub(r'%\d*d', '*', pattern)
-    glob_pattern = re.sub(r'#+', '*', glob_pattern)
+    glob_pattern = re.sub(r"%\d*d", "*", pattern)
+    glob_pattern = re.sub(r"#+", "*", glob_pattern)
 
     print(f"[NukeRead] Searching for sequence with pattern: {glob_pattern}")
 
@@ -177,7 +181,9 @@ def detect_sequence(filepath: str) -> Tuple[str, List[int], int]:
             # List files in directory for debugging
             try:
                 files = os.listdir(directory)
-                print(f"[NukeRead] Files in directory: {files[:10]}...")  # Show first 10
+                print(
+                    f"[NukeRead] Files in directory: {files[:10]}..."
+                )  # Show first 10
             except Exception as e:
                 print(f"[NukeRead] Error listing directory: {e}")
         else:
@@ -190,7 +196,7 @@ def detect_sequence(filepath: str) -> Tuple[str, List[int], int]:
     frames = []
     for f in matching_files:
         # Extract number from filename
-        match = re.search(r'(\d+)\.[^.]+$', f)
+        match = re.search(r"(\d+)\.[^.]+$", f)
         if match:
             frames.append(int(match.group(1)))
 
@@ -213,18 +219,18 @@ def parse_frame_range(range_str: str) -> List[int]:
 
     frames = []
 
-    for part in range_str.split(','):
+    for part in range_str.split(","):
         part = part.strip()
 
         # Check for step (x2)
         step = 1
-        if 'x' in part:
-            part, step_str = part.split('x')
+        if "x" in part:
+            part, step_str = part.split("x")
             step = int(step_str)
 
         # Check for range (-)
-        if '-' in part:
-            start, end = part.split('-')
+        if "-" in part:
+            start, end = part.split("-")
             frames.extend(range(int(start), int(end) + 1, step))
         else:
             frames.append(int(part))
@@ -236,10 +242,16 @@ def parse_frame_range(range_str: str) -> List[int]:
 # File Counter Utilities
 # ============================================================================
 
+
 def _is_windows() -> bool:
     """Check if running on Windows."""
     import sys
-    return sys.platform.startswith('win') or sys.platform == 'cygwin' or sys.platform == 'msys'
+
+    return (
+        sys.platform.startswith("win")
+        or sys.platform == "cygwin"
+        or sys.platform == "msys"
+    )
 
 
 def _normalize_for_comparison(filename: str) -> str:
@@ -284,7 +296,7 @@ def get_unique_filepath(filepath: str) -> str:
     if not _file_exists_case_aware(filepath):
         return filepath
 
-    directory = os.path.dirname(filepath) or '.'
+    directory = os.path.dirname(filepath) or "."
     filename = os.path.basename(filepath)
     base, ext = os.path.splitext(filename)
 
@@ -308,7 +320,7 @@ def get_unique_filepath(filepath: str) -> str:
 
     # Pattern 1: Check if base already ends with a separator and number (e.g., image_0001, image-3)
     # Match patterns like: name_0001, name-123, name.123
-    separator_pattern = re.match(r'^(.+?)([_\-\.])(\d+)$', base)
+    separator_pattern = re.match(r"^(.+?)([_\-\.])(\d+)$", base)
 
     if separator_pattern:
         # File already has a separator+number pattern, increment it
@@ -331,11 +343,12 @@ def get_unique_filepath(filepath: str) -> str:
 
         # Fallback: use timestamp
         import time
+
         timestamp = int(time.time() * 1000)
         return os.path.join(directory, f"{prefix}{separator}{timestamp}{ext}")
 
     # Pattern 2: Check if base ends with a number directly (e.g., image2, render001)
-    direct_number_pattern = re.match(r'^(.+?)(\d+)$', base)
+    direct_number_pattern = re.match(r"^(.+?)(\d+)$", base)
 
     if direct_number_pattern:
         prefix = direct_number_pattern.group(1)
@@ -356,6 +369,7 @@ def get_unique_filepath(filepath: str) -> str:
 
         # Fallback: use timestamp
         import time
+
         timestamp = int(time.time() * 1000)
         return os.path.join(directory, f"{prefix}{timestamp}{ext}")
 
@@ -371,6 +385,7 @@ def get_unique_filepath(filepath: str) -> str:
 
     # Ultimate fallback: use timestamp
     import time
+
     timestamp = int(time.time() * 1000)
     return os.path.join(directory, f"{base}_{timestamp}{ext}")
 
@@ -378,6 +393,7 @@ def get_unique_filepath(filepath: str) -> str:
 # ============================================================================
 # Image I/O Functions
 # ============================================================================
+
 
 def read_image_oiio(filepath: str) -> Optional[np.ndarray]:
     """Read image using OpenImageIO."""
@@ -497,9 +513,13 @@ def read_image(filepath: str) -> Optional[np.ndarray]:
     return None
 
 
-def write_image_oiio(filepath: str, pixels: np.ndarray,
-                     bit_depth: str = "16", compression: str = "zip",
-                     metadata: Optional[Dict] = None) -> bool:
+def write_image_oiio(
+    filepath: str,
+    pixels: np.ndarray,
+    bit_depth: str = "16",
+    compression: str = "zip",
+    metadata: Optional[Dict] = None,
+) -> bool:
     """Write image using OpenImageIO."""
     if not OIIO_AVAILABLE:
         return False
@@ -533,18 +553,18 @@ def write_image_oiio(filepath: str, pixels: np.ndarray,
 
         # Set compression for EXR
         ext = os.path.splitext(filepath)[1].lower()
-        if ext in ['.exr']:
+        if ext in [".exr"]:
             spec.attribute("compression", compression)
-        elif ext in ['.png']:
+        elif ext in [".png"]:
             spec.attribute("png:compressionLevel", 6)
-        elif ext in ['.jpg', '.jpeg']:
+        elif ext in [".jpg", ".jpeg"]:
             spec.attribute("jpeg:quality", 95)
-        elif ext in ['.tif', '.tiff']:
+        elif ext in [".tif", ".tiff"]:
             if compression == "none":
                 spec.attribute("compression", "none")
             elif compression in ["lzw", "zip", "deflate"]:
                 spec.attribute("compression", compression)
-        elif ext in ['.webp']:
+        elif ext in [".webp"]:
             # WebP only supports 8-bit, force conversion
             format_type = oiio.UINT8
             pixels_out = (np.clip(pixels, 0, 1) * 255).astype(np.uint8)
@@ -564,7 +584,7 @@ def write_image_oiio(filepath: str, pixels: np.ndarray,
             return False
 
         # Ensure directory exists
-        os.makedirs(os.path.dirname(filepath) or '.', exist_ok=True)
+        os.makedirs(os.path.dirname(filepath) or ".", exist_ok=True)
 
         if not out.open(filepath, spec):
             print(f"[NukeWrite] OIIO error opening: {out.geterror()}")
@@ -583,15 +603,14 @@ def write_image_oiio(filepath: str, pixels: np.ndarray,
         return False
 
 
-def write_image_cv2(filepath: str, pixels: np.ndarray,
-                    bit_depth: str = "16") -> bool:
+def write_image_cv2(filepath: str, pixels: np.ndarray, bit_depth: str = "16") -> bool:
     """Write image using OpenCV."""
     if not CV2_AVAILABLE:
         return False
 
     try:
         # Ensure directory exists
-        os.makedirs(os.path.dirname(filepath) or '.', exist_ok=True)
+        os.makedirs(os.path.dirname(filepath) or ".", exist_ok=True)
 
         # Convert to output format
         if bit_depth == "8":
@@ -615,15 +634,14 @@ def write_image_cv2(filepath: str, pixels: np.ndarray,
         return False
 
 
-def write_image_pil(filepath: str, pixels: np.ndarray,
-                    bit_depth: str = "8") -> bool:
+def write_image_pil(filepath: str, pixels: np.ndarray, bit_depth: str = "8") -> bool:
     """Write image using PIL."""
     if not PIL_AVAILABLE:
         return False
 
     try:
         # Ensure directory exists
-        os.makedirs(os.path.dirname(filepath) or '.', exist_ok=True)
+        os.makedirs(os.path.dirname(filepath) or ".", exist_ok=True)
 
         # Convert to 8-bit for PIL
         pixels_out = (np.clip(pixels, 0, 1) * 255).astype(np.uint8)
@@ -641,9 +659,13 @@ def write_image_pil(filepath: str, pixels: np.ndarray,
         return False
 
 
-def write_image(filepath: str, pixels: np.ndarray,
-                bit_depth: str = "16", compression: str = "zip",
-                metadata: Optional[Dict] = None) -> bool:
+def write_image(
+    filepath: str,
+    pixels: np.ndarray,
+    bit_depth: str = "16",
+    compression: str = "zip",
+    metadata: Optional[Dict] = None,
+) -> bool:
     """
     Write an image file using the best available library.
 
@@ -670,23 +692,65 @@ def write_image(filepath: str, pixels: np.ndarray,
 
 def get_supported_formats() -> Dict[str, List[str]]:
     """Get dictionary of supported image formats."""
-    formats = {
-        "read": [],
-        "write": []
-    }
+    formats = {"read": [], "write": []}
 
     if OIIO_AVAILABLE:
         # OIIO supports many formats
-        formats["read"].extend([
-            "exr", "tif", "tiff", "png", "jpg", "jpeg", "dpx", "cin",
-            "hdr", "rgbe", "tga", "bmp", "psd", "gif", "webp", "heic",
-            "avif", "raw", "cr2", "nef", "arw", "dng", "fits", "sgi",
-            "pic", "pnm", "pbm", "pgm", "ppm", "rla", "iff", "ico"
-        ])
-        formats["write"].extend([
-            "exr", "tif", "tiff", "png", "jpg", "jpeg", "dpx",
-            "hdr", "tga", "bmp", "webp", "pnm", "pbm", "pgm", "ppm"
-        ])
+        formats["read"].extend(
+            [
+                "exr",
+                "tif",
+                "tiff",
+                "png",
+                "jpg",
+                "jpeg",
+                "dpx",
+                "cin",
+                "hdr",
+                "rgbe",
+                "tga",
+                "bmp",
+                "psd",
+                "gif",
+                "webp",
+                "heic",
+                "avif",
+                "raw",
+                "cr2",
+                "nef",
+                "arw",
+                "dng",
+                "fits",
+                "sgi",
+                "pic",
+                "pnm",
+                "pbm",
+                "pgm",
+                "ppm",
+                "rla",
+                "iff",
+                "ico",
+            ]
+        )
+        formats["write"].extend(
+            [
+                "exr",
+                "tif",
+                "tiff",
+                "png",
+                "jpg",
+                "jpeg",
+                "dpx",
+                "hdr",
+                "tga",
+                "bmp",
+                "webp",
+                "pnm",
+                "pbm",
+                "pgm",
+                "ppm",
+            ]
+        )
 
     if CV2_AVAILABLE:
         cv2_formats = ["png", "jpg", "jpeg", "tif", "tiff", "bmp", "webp"]
@@ -708,6 +772,7 @@ def get_supported_formats() -> Dict[str, List[str]]:
 # ============================================================================
 # Preview Utilities
 # ============================================================================
+
 
 def resize_image_oiio(img_np: np.ndarray, max_size: int = 256) -> np.ndarray:
     """
@@ -735,8 +800,11 @@ def resize_image_oiio(img_np: np.ndarray, max_size: int = 256) -> np.ndarray:
 
         # Simple nearest neighbor resize
         import cv2 as cv2_resize
+
         if CV2_AVAILABLE:
-            return cv2_resize.resize(img_np, (new_width, new_height), interpolation=cv2_resize.INTER_LANCZOS4)
+            return cv2_resize.resize(
+                img_np, (new_width, new_height), interpolation=cv2_resize.INTER_LANCZOS4
+            )
         else:
             # Very basic resize using numpy
             y_indices = np.linspace(0, height - 1, new_height).astype(int)
@@ -762,10 +830,14 @@ def resize_image_oiio(img_np: np.ndarray, max_size: int = 256) -> np.ndarray:
     src_buf = oiio.ImageBuf(spec)
     # Ensure array is contiguous in memory for OIIO
     pixels_contiguous = np.ascontiguousarray(img_np.astype(np.float32))
-    src_buf.set_pixels(oiio.ROI(0, width, 0, height, 0, 1, 0, channels), pixels_contiguous)
+    src_buf.set_pixels(
+        oiio.ROI(0, width, 0, height, 0, 1, 0, channels), pixels_contiguous
+    )
 
     # Resize using OIIO
-    dst_buf = oiio.ImageBufAlgo.resize(src_buf, roi=oiio.ROI(0, new_width, 0, new_height, 0, 1, 0, channels))
+    dst_buf = oiio.ImageBufAlgo.resize(
+        src_buf, roi=oiio.ROI(0, new_width, 0, new_height, 0, 1, 0, channels)
+    )
 
     # Get pixels back
     resized = dst_buf.get_pixels(oiio.FLOAT)
@@ -826,7 +898,9 @@ def save_preview_oiio(img_np: np.ndarray, filepath: str) -> bool:
     return True
 
 
-def create_preview_images(images: torch.Tensor, max_size: int = 256, max_frames: int = 1000) -> list:
+def create_preview_images(
+    images: torch.Tensor, max_size: int = 256, max_frames: int = 1000
+) -> list:
     """
     Create preview images for display in the node UI.
     Uses OpenImageIO for image processing and saving.
@@ -872,12 +946,14 @@ def create_preview_images(images: torch.Tensor, max_size: int = 256, max_frames:
         preview_path = os.path.join(temp_dir, preview_filename)
 
         if save_preview_oiio(img_np, preview_path):
-            previews.append({
-                "filename": preview_filename,
-                "subfolder": "",
-                "type": "temp",
-                "frame": i + 1
-            })
+            previews.append(
+                {
+                    "filename": preview_filename,
+                    "subfolder": "",
+                    "type": "temp",
+                    "frame": i + 1,
+                }
+            )
 
     return previews
 
@@ -914,11 +990,7 @@ def save_preview_to_temp(img_np: np.ndarray, suffix: str = "") -> dict:
     preview_path = os.path.join(temp_dir, preview_filename)
 
     if save_preview_oiio(img_np, preview_path):
-        return {
-            "filename": preview_filename,
-            "subfolder": "",
-            "type": "temp"
-        }
+        return {"filename": preview_filename, "subfolder": "", "type": "temp"}
 
     return None
 
@@ -926,6 +998,7 @@ def save_preview_to_temp(img_np: np.ndarray, suffix: str = "") -> dict:
 # ============================================================================
 # ComfyUI Nodes
 # ============================================================================
+
 
 class NukeRead(NukeNodeBase):
     """
@@ -945,39 +1018,60 @@ class NukeRead(NukeNodeBase):
     def INPUT_TYPES(cls):
         return {
             "required": {
-                "file_path": ("STRING", {
-                    "default": "",
-                    "multiline": False,
-                    "placeholder": "Path to image or sequence (e.g., /path/image.%04d.exr)",
-                }),
-                "frame": ("INT", {
-                    "default": 1,
-                    "min": -999999,
-                    "max": 999999,
-                    "step": 1,
-                }),
+                "file_path": (
+                    "STRING",
+                    {
+                        "default": "",
+                        "multiline": False,
+                        "placeholder": "Path to image or sequence (e.g., /path/image.%04d.exr)",
+                    },
+                ),
+                "frame": (
+                    "INT",
+                    {
+                        "default": 1,
+                        "min": -999999,
+                        "max": 999999,
+                        "step": 1,
+                    },
+                ),
             },
             "optional": {
-                "load_as_sequence": ("BOOLEAN", {
-                    "default": True,
-                    "tooltip": "Treat path as image sequence (enable for patterns like ####, %04d)"
-                }),
-                "first_frame": ("INT", {
-                    "default": 1,
-                    "min": -999999,
-                    "max": 999999,
-                    "step": 1,
-                }),
-                "last_frame": ("INT", {
-                    "default": 1,
-                    "min": -999999,
-                    "max": 999999,
-                    "step": 1,
-                }),
+                "load_as_sequence": (
+                    "BOOLEAN",
+                    {
+                        "default": True,
+                        "tooltip": "Treat path as image sequence (enable for patterns like ####, %04d)",
+                    },
+                ),
+                "first_frame": (
+                    "INT",
+                    {
+                        "default": 1,
+                        "min": -999999,
+                        "max": 999999,
+                        "step": 1,
+                    },
+                ),
+                "last_frame": (
+                    "INT",
+                    {
+                        "default": 1,
+                        "min": -999999,
+                        "max": 999999,
+                        "step": 1,
+                    },
+                ),
                 "frame_mode": (["single", "range", "all"], {"default": "single"}),
-                "missing_frames": (["error", "black", "hold", "nearest"], {"default": "black"}),
+                "missing_frames": (
+                    ["error", "black", "hold", "nearest"],
+                    {"default": "black"},
+                ),
                 "colorspace": (["raw", "sRGB", "linear", "ACEScg"], {"default": "raw"}),
-                "show_preview": ("BOOLEAN", {"default": True, "tooltip": "Show thumbnail preview in node"}),
+                "show_preview": (
+                    "BOOLEAN",
+                    {"default": True, "tooltip": "Show thumbnail preview in node"},
+                ),
             },
         }
 
@@ -990,9 +1084,18 @@ class NukeRead(NukeNodeBase):
     def IS_CHANGED(cls, **kwargs):
         return float("nan")
 
-    def read_image(self, file_path, frame, load_as_sequence=True, first_frame=1, last_frame=1,
-                   frame_mode="single", missing_frames="black", colorspace="raw",
-                   show_preview=True):
+    def read_image(
+        self,
+        file_path,
+        frame,
+        load_as_sequence=True,
+        first_frame=1,
+        last_frame=1,
+        frame_mode="single",
+        missing_frames="black",
+        colorspace="raw",
+        show_preview=True,
+    ):
         """Read image(s) from disk."""
 
         if not file_path:
@@ -1080,14 +1183,16 @@ class NukeRead(NukeNodeBase):
             # Apply colorspace conversion (basic)
             if colorspace == "sRGB" and img.max() <= 1.0:
                 # Linear to sRGB
-                img = np.where(img <= 0.0031308,
-                              img * 12.92,
-                              1.055 * np.power(np.clip(img, 0.0031308, None), 1/2.4) - 0.055)
+                img = np.where(
+                    img <= 0.0031308,
+                    img * 12.92,
+                    1.055 * np.power(np.clip(img, 0.0031308, None), 1 / 2.4) - 0.055,
+                )
             elif colorspace == "linear":
                 # sRGB to linear (assume input is sRGB)
-                img = np.where(img <= 0.04045,
-                              img / 12.92,
-                              np.power((img + 0.055) / 1.055, 2.4))
+                img = np.where(
+                    img <= 0.04045, img / 12.92, np.power((img + 0.055) / 1.055, 2.4)
+                )
 
             images.append(img)
 
@@ -1127,8 +1232,16 @@ class NukeWrite(NukeNodeBase):
     def INPUT_TYPES(cls):
         # Common EXR compression types
         exr_compressions = [
-            "none", "rle", "zip", "zips", "piz",
-            "pxr24", "b44", "b44a", "dwaa", "dwab"
+            "none",
+            "rle",
+            "zip",
+            "zips",
+            "piz",
+            "pxr24",
+            "b44",
+            "b44a",
+            "dwaa",
+            "dwab",
         ]
 
         # Common bit depths
@@ -1137,39 +1250,54 @@ class NukeWrite(NukeNodeBase):
         return {
             "required": {
                 "image": ("IMAGE",),
-                "file_path": ("STRING", {
-                    "default": "",
-                    "multiline": False,
-                    "placeholder": "Output path (e.g., output.%04d.exr or output.#### or output)",
-                }),
-                "frame_start": ("INT", {
-                    "default": 1,
-                    "min": -999999,
-                    "max": 999999,
-                    "step": 1,
-                }),
+                "file_path": (
+                    "STRING",
+                    {
+                        "default": "",
+                        "multiline": False,
+                        "placeholder": "Output path (e.g., output.%04d.exr or output.#### or output)",
+                    },
+                ),
+                "frame_start": (
+                    "INT",
+                    {
+                        "default": 1,
+                        "min": -999999,
+                        "max": 999999,
+                        "step": 1,
+                    },
+                ),
             },
             "optional": {
-                "file_type": ([
-                    "exr", "tiff", "png", "jpg", "dpx",
-                    "hdr", "tga", "bmp", "webp"
-                ], {"default": "exr"}),
+                "file_type": (
+                    ["exr", "tiff", "png", "jpg", "dpx", "hdr", "tga", "bmp", "webp"],
+                    {"default": "exr"},
+                ),
                 "bit_depth": (bit_depths, {"default": "16f"}),
                 "compression": (exr_compressions, {"default": "dwaa"}),
-                "frame_padding": ("INT", {
-                    "default": 4,
-                    "min": 1,
-                    "max": 10,
-                    "step": 1,
-                    "tooltip": "Number of digits for frame numbers (e.g., 4 = 0001, 0002...)"
-                }),
-                "auto_sequence": ("BOOLEAN", {
-                    "default": True,
-                    "tooltip": "Auto-increment filename (image1.png, image2.png...). If disabled, overwrites existing file."
-                }),
+                "frame_padding": (
+                    "INT",
+                    {
+                        "default": 4,
+                        "min": 1,
+                        "max": 10,
+                        "step": 1,
+                        "tooltip": "Number of digits for frame numbers (e.g., 4 = 0001, 0002...)",
+                    },
+                ),
+                "auto_sequence": (
+                    "BOOLEAN",
+                    {
+                        "default": True,
+                        "tooltip": "Auto-increment filename (image1.png, image2.png...). If disabled, overwrites existing file.",
+                    },
+                ),
                 "create_directories": ("BOOLEAN", {"default": True}),
                 "colorspace": (["raw", "sRGB", "linear", "ACEScg"], {"default": "raw"}),
-                "show_preview": ("BOOLEAN", {"default": True, "tooltip": "Show thumbnail preview in node"}),
+                "show_preview": (
+                    "BOOLEAN",
+                    {"default": True, "tooltip": "Show thumbnail preview in node"},
+                ),
             },
         }
 
@@ -1179,10 +1307,20 @@ class NukeWrite(NukeNodeBase):
     CATEGORY = "Nuke/IO"
     OUTPUT_NODE = True
 
-    def write_image(self, image, file_path, frame_start=1,
-                    file_type="exr", bit_depth="16f", compression="dwaa",
-                    frame_padding=4, auto_sequence=True, create_directories=True, colorspace="raw",
-                    show_preview=True):
+    def write_image(
+        self,
+        image,
+        file_path,
+        frame_start=1,
+        file_type="exr",
+        bit_depth="16f",
+        compression="dwaa",
+        frame_padding=4,
+        auto_sequence=True,
+        create_directories=True,
+        colorspace="raw",
+        show_preview=True,
+    ):
         """Write image(s) to disk."""
 
         if not file_path:
@@ -1220,7 +1358,7 @@ class NukeWrite(NukeNodeBase):
 
         # Ensure correct extension
         base, ext = os.path.splitext(file_path)
-        if ext.lower().lstrip('.') != file_type:
+        if ext.lower().lstrip(".") != file_type:
             file_path = f"{base}.{file_type}"
             pattern, frame_spec, padding_from_pattern = parse_frame_pattern(file_path)
             # If pattern was detected after adding extension, use it; otherwise keep our padding
@@ -1263,14 +1401,18 @@ class NukeWrite(NukeNodeBase):
             # Apply colorspace conversion (basic)
             if colorspace == "sRGB":
                 # Linear to sRGB
-                pixels = np.where(pixels <= 0.0031308,
-                                 pixels * 12.92,
-                                 1.055 * np.power(np.clip(pixels, 0.0031308, None), 1/2.4) - 0.055)
+                pixels = np.where(
+                    pixels <= 0.0031308,
+                    pixels * 12.92,
+                    1.055 * np.power(np.clip(pixels, 0.0031308, None), 1 / 2.4) - 0.055,
+                )
             elif colorspace == "linear":
                 # sRGB to linear
-                pixels = np.where(pixels <= 0.04045,
-                                 pixels / 12.92,
-                                 np.power((pixels + 0.055) / 1.055, 2.4))
+                pixels = np.where(
+                    pixels <= 0.04045,
+                    pixels / 12.92,
+                    np.power((pixels + 0.055) / 1.055, 2.4),
+                )
 
             # Prepare metadata
             # RAW: only tag EXR as linear (convention), skip for other formats
@@ -1314,10 +1456,13 @@ class NukeReadInfo(NukeNodeBase):
     def INPUT_TYPES(cls):
         return {
             "required": {
-                "file_path": ("STRING", {
-                    "default": "",
-                    "multiline": False,
-                }),
+                "file_path": (
+                    "STRING",
+                    {
+                        "default": "",
+                        "multiline": False,
+                    },
+                ),
             },
         }
 
@@ -1402,7 +1547,9 @@ class NukeReadInfo(NukeNodeBase):
                     img = cv2.imread(sample_path, cv2.IMREAD_UNCHANGED)
                     if img is not None:
                         info += f"Resolution: {img.shape[1]} x {img.shape[0]}\n"
-                        info += f"Channels: {img.shape[2] if len(img.shape) > 2 else 1}\n"
+                        info += (
+                            f"Channels: {img.shape[2] if len(img.shape) > 2 else 1}\n"
+                        )
                         info += f"Bit Depth: {img.dtype}\n"
                 except Exception as e:
                     info += f"Error reading metadata: {e}\n"

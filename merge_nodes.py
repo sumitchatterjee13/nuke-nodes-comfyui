@@ -158,9 +158,7 @@ class NukeMerge(NukeNodeBase):
         elif operation == "overlay":
             # Overlay blend mode
             blended = torch.where(
-                b_rgb < 0.5,
-                2 * a_rgb * b_rgb,
-                1 - 2 * (1 - a_rgb) * (1 - b_rgb)
+                b_rgb < 0.5, 2 * a_rgb * b_rgb, 1 - 2 * (1 - a_rgb) * (1 - b_rgb)
             )
             result_rgb = blended * a_alpha + b_rgb * (1 - a_alpha)
             result_alpha = a_alpha + b_alpha * (1 - a_alpha)
@@ -170,7 +168,7 @@ class NukeMerge(NukeNodeBase):
             blended = torch.where(
                 a_rgb < 0.5,
                 b_rgb - (1 - 2 * a_rgb) * b_rgb * (1 - b_rgb),
-                b_rgb + (2 * a_rgb - 1) * (torch.sqrt(b_rgb) - b_rgb)
+                b_rgb + (2 * a_rgb - 1) * (torch.sqrt(b_rgb) - b_rgb),
             )
             result_rgb = blended * a_alpha + b_rgb * (1 - a_alpha)
             result_alpha = a_alpha + b_alpha * (1 - a_alpha)
@@ -178,9 +176,7 @@ class NukeMerge(NukeNodeBase):
         elif operation == "hard_light":
             # Hard light blend
             blended = torch.where(
-                a_rgb < 0.5,
-                2 * a_rgb * b_rgb,
-                1 - 2 * (1 - a_rgb) * (1 - b_rgb)
+                a_rgb < 0.5, 2 * a_rgb * b_rgb, 1 - 2 * (1 - a_rgb) * (1 - b_rgb)
             )
             result_rgb = blended * a_alpha + b_rgb * (1 - a_alpha)
             result_alpha = a_alpha + b_alpha * (1 - a_alpha)
@@ -190,7 +186,7 @@ class NukeMerge(NukeNodeBase):
             blended = torch.where(
                 a_rgb >= 1,
                 torch.ones_like(b_rgb),
-                torch.clamp(b_rgb / (1 - a_rgb + 1e-7), 0, 1)
+                torch.clamp(b_rgb / (1 - a_rgb + 1e-7), 0, 1),
             )
             result_rgb = blended * a_alpha + b_rgb * (1 - a_alpha)
             result_alpha = a_alpha + b_alpha * (1 - a_alpha)
@@ -200,7 +196,7 @@ class NukeMerge(NukeNodeBase):
             blended = torch.where(
                 a_rgb <= 0,
                 torch.zeros_like(b_rgb),
-                1 - torch.clamp((1 - b_rgb) / (a_rgb + 1e-7), 0, 1)
+                1 - torch.clamp((1 - b_rgb) / (a_rgb + 1e-7), 0, 1),
             )
             result_rgb = blended * a_alpha + b_rgb * (1 - a_alpha)
             result_alpha = a_alpha + b_alpha * (1 - a_alpha)
@@ -461,7 +457,9 @@ class NukeConstant(NukeNodeBase):
     FUNCTION = "generate"
     CATEGORY = "Nuke/Generate"
 
-    def generate(self, width, height, red, green, blue, alpha, output_alpha, batch_size=1):
+    def generate(
+        self, width, height, red, green, blue, alpha, output_alpha, batch_size=1
+    ):
         """
         Generate a solid color image with the specified RGBA values.
 

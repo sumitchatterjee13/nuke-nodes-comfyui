@@ -12,13 +12,13 @@ WEB_DIRECTORY = os.path.join(os.path.dirname(os.path.realpath(__file__)), "web")
 from .version import (
     __version__,
     __title__,
-    __description__, 
+    __description__,
     __author__,
     __license__,
     __url__,
     get_version,
     get_version_info,
-    get_full_version
+    get_full_version,
 )
 
 from .blur_nodes import *
@@ -48,7 +48,9 @@ from .merge_nodes import NODE_DISPLAY_NAME_MAPPINGS as merge_display_mappings
 from .transform_nodes import NODE_CLASS_MAPPINGS as transform_mappings
 from .transform_nodes import NODE_DISPLAY_NAME_MAPPINGS as transform_display_mappings
 from .vectorfield_nodes import NODE_CLASS_MAPPINGS as vectorfield_mappings
-from .vectorfield_nodes import NODE_DISPLAY_NAME_MAPPINGS as vectorfield_display_mappings
+from .vectorfield_nodes import (
+    NODE_DISPLAY_NAME_MAPPINGS as vectorfield_display_mappings,
+)
 from .viewer_nodes import NODE_CLASS_MAPPINGS as viewer_mappings
 from .viewer_nodes import NODE_DISPLAY_NAME_MAPPINGS as viewer_display_mappings
 
@@ -83,5 +85,5 @@ __all__ = [
     "__url__",
     "get_version",
     "get_version_info",
-    "get_full_version"
+    "get_full_version",
 ]

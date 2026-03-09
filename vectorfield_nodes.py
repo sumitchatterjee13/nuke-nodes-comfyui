@@ -66,7 +66,7 @@ def parse_cube_lut(filepath: Path) -> Dict:
         "domain_max": [1.0, 1.0, 1.0],
         "size": 0,
         "data": [],
-        "type": "3D"
+        "type": "3D",
     }
 
     with open(filepath, "r") as f:
@@ -125,7 +125,7 @@ def parse_3dl_lut(filepath: Path) -> Dict:
         "data": [],
         "type": "3D",
         "input_range": None,
-        "output_bit_depth": 12  # Common default
+        "output_bit_depth": 12,  # Common default
     }
 
     with open(filepath, "r") as f:
@@ -164,13 +164,13 @@ def parse_3dl_lut(filepath: Path) -> Dict:
     # Determine LUT size from data count
     data_count = len(data_lines)
     for size in [17, 33, 65, 32, 64, 16]:
-        if size ** 3 == data_count:
+        if size**3 == data_count:
             lut_data["size"] = size
             break
 
     if lut_data["size"] == 0 and data_count > 0:
         # Estimate size
-        lut_data["size"] = int(round(data_count ** (1/3)))
+        lut_data["size"] = int(round(data_count ** (1 / 3)))
 
     # Normalize integer values to 0-1 range
     if data_lines:
@@ -204,7 +204,7 @@ def parse_spi3d_lut(filepath: Path) -> Dict:
         "domain_max": [1.0, 1.0, 1.0],
         "size": 0,
         "data": [],
-        "type": "3D"
+        "type": "3D",
     }
 
     with open(filepath, "r") as f:
@@ -271,7 +271,7 @@ def parse_spi1d_lut(filepath: Path) -> Dict:
         "domain_max": [1.0, 1.0, 1.0],
         "size": 0,
         "data": [],
-        "type": "1D"
+        "type": "1D",
     }
 
     with open(filepath, "r") as f:
@@ -422,7 +422,9 @@ def apply_3d_lut(image: np.ndarray, lut_data: Dict) -> np.ndarray:
     try:
         lut_3d = lut.reshape((size, size, size, 3))
     except ValueError:
-        print(f"[NukeVectorField] LUT data size mismatch. Expected {size**3} entries, got {len(lut)}")
+        print(
+            f"[NukeVectorField] LUT data size mismatch. Expected {size**3} entries, got {len(lut)}"
+        )
         return image
 
     # Normalize input to LUT domain
@@ -509,20 +511,29 @@ class NukeVectorfield(NukeNodeBase):
         return {
             "required": {
                 "image": ("IMAGE",),
-                "lut_file": (lut_files, {"default": lut_files[0] if lut_files else "No LUTs found"}),
-                "intensity": ("FLOAT", {
-                    "default": 1.0,
-                    "min": 0.0,
-                    "max": 2.0,
-                    "step": 0.01,
-                }),
+                "lut_file": (
+                    lut_files,
+                    {"default": lut_files[0] if lut_files else "No LUTs found"},
+                ),
+                "intensity": (
+                    "FLOAT",
+                    {
+                        "default": 1.0,
+                        "min": 0.0,
+                        "max": 2.0,
+                        "step": 0.01,
+                    },
+                ),
             },
             "optional": {
-                "custom_lut_path": ("STRING", {
-                    "default": "",
-                    "multiline": False,
-                    "placeholder": "Optional: path to custom LUT file",
-                }),
+                "custom_lut_path": (
+                    "STRING",
+                    {
+                        "default": "",
+                        "multiline": False,
+                        "placeholder": "Optional: path to custom LUT file",
+                    },
+                ),
             },
         }
 
@@ -610,13 +621,19 @@ class NukeVectorfieldInfo(NukeNodeBase):
 
         return {
             "required": {
-                "lut_file": (lut_files, {"default": lut_files[0] if lut_files else "No LUTs found"}),
+                "lut_file": (
+                    lut_files,
+                    {"default": lut_files[0] if lut_files else "No LUTs found"},
+                ),
             },
             "optional": {
-                "custom_lut_path": ("STRING", {
-                    "default": "",
-                    "multiline": False,
-                }),
+                "custom_lut_path": (
+                    "STRING",
+                    {
+                        "default": "",
+                        "multiline": False,
+                    },
+                ),
             },
         }
 
@@ -667,16 +684,16 @@ class NukeVectorfieldInfo(NukeNodeBase):
         info += f"Type: {lut_data['type']} LUT\n"
         info += f"Size: {lut_data['size']}"
 
-        if lut_data['type'] == '3D':
-            total_entries = lut_data['size'] ** 3
+        if lut_data["type"] == "3D":
+            total_entries = lut_data["size"] ** 3
             info += f" ({lut_data['size']}x{lut_data['size']}x{lut_data['size']} = {total_entries} entries)"
 
         info += "\n"
         info += f"Domain Min: {lut_data['domain_min']}\n"
         info += f"Domain Max: {lut_data['domain_max']}\n"
 
-        if len(lut_data['data']) > 0:
-            data = lut_data['data']
+        if len(lut_data["data"]) > 0:
+            data = lut_data["data"]
             info += f"\nData Range:\n"
             info += f"  Min: [{data.min(axis=0)[0]:.4f}, {data.min(axis=0)[1]:.4f}, {data.min(axis=0)[2]:.4f}]\n"
             info += f"  Max: [{data.max(axis=0)[0]:.4f}, {data.max(axis=0)[1]:.4f}, {data.max(axis=0)[2]:.4f}]\n"

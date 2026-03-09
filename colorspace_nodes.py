@@ -98,6 +98,7 @@ ACES_STUDIO_COLORSPACES = [
 
 try:
     import PyOpenColorIO as OCIO
+
     OCIO_AVAILABLE = True
     OCIO_VERSION = OCIO.GetVersion()
     print(f"[NukeOCIO] OpenColorIO version: {OCIO_VERSION}")
@@ -132,10 +133,19 @@ def load_studio_config():
             if config:
                 OCIO_CONFIG = config
                 print(f"[NukeOCIO] Loaded {config_name}")
-                print(f"[NukeOCIO] Using hardcoded colorspaces: {len(ACES_STUDIO_COLORSPACES)} available")
-                
+                print(
+                    f"[NukeOCIO] Using hardcoded colorspaces: {len(ACES_STUDIO_COLORSPACES)} available"
+                )
+
                 # Print some camera colorspaces to verify
-                camera_cs = [cs for cs in ACES_STUDIO_COLORSPACES if any(kw in cs for kw in ['ARRI', 'Sony', 'RED', 'Canon', 'LogC', 'S-Log'])]
+                camera_cs = [
+                    cs
+                    for cs in ACES_STUDIO_COLORSPACES
+                    if any(
+                        kw in cs
+                        for kw in ["ARRI", "Sony", "RED", "Canon", "LogC", "S-Log"]
+                    )
+                ]
                 if camera_cs:
                     print(f"[NukeOCIO] Camera colorspaces available: {len(camera_cs)}")
 
@@ -200,16 +210,33 @@ def get_camera_colorspaces(colorspaces: List[str]) -> List[str]:
         List of camera-related colorspaces (ARRI, Sony, RED, Canon, etc.)
     """
     camera_keywords = [
-        "ARRI", "LogC", "Wide Gamut 3", "Wide Gamut 4",
-        "Sony", "S-Log", "S-Gamut",
-        "RED", "Log3G10", "REDWideGamut",
-        "Canon", "CanonLog", "CinemaGamut",
-        "Panasonic", "V-Log", "V-Gamut",
-        "Blackmagic", "BMD", "DaVinci",
+        "ARRI",
+        "LogC",
+        "Wide Gamut 3",
+        "Wide Gamut 4",
+        "Sony",
+        "S-Log",
+        "S-Gamut",
+        "RED",
+        "Log3G10",
+        "REDWideGamut",
+        "Canon",
+        "CanonLog",
+        "CinemaGamut",
+        "Panasonic",
+        "V-Log",
+        "V-Gamut",
+        "Blackmagic",
+        "BMD",
+        "DaVinci",
         "Apple Log",
-        "Fuji", "F-Log",
-        "GoPro", "Protune",
-        "DJI", "D-Log", "D-Gamut",
+        "Fuji",
+        "F-Log",
+        "GoPro",
+        "Protune",
+        "DJI",
+        "D-Log",
+        "D-Gamut",
     ]
 
     camera_spaces = []
@@ -226,7 +253,7 @@ def apply_ocio_transform(
     image_np: np.ndarray,
     src_colorspace: str,
     dst_colorspace: str,
-    config: "OCIO.Config"
+    config: "OCIO.Config",
 ) -> np.ndarray:
     """
     Apply OCIO color space transformation to numpy image array.
@@ -281,7 +308,7 @@ def apply_ocio_transform(
             OCIO.BIT_DEPTH_F32,
             rgb_flat.strides[1],  # chanStrideBytes
             rgb_flat.strides[0],  # xStrideBytes
-            width * rgb_flat.strides[0]  # yStrideBytes
+            width * rgb_flat.strides[0],  # yStrideBytes
         )
 
         cpu_processor.apply(img_desc)
@@ -355,7 +382,10 @@ class NukeOCIOColorSpace(NukeNodeBase):
         return {
             "required": {
                 "image": ("IMAGE",),
-                "config": (["ACES 2.0 Studio Config"], {"default": "ACES 2.0 Studio Config"}),
+                "config": (
+                    ["ACES 2.0 Studio Config"],
+                    {"default": "ACES 2.0 Studio Config"},
+                ),
                 "in_colorspace": (colorspaces, {"default": default_in}),
                 "out_colorspace": (colorspaces, {"default": default_out}),
             },
@@ -373,7 +403,9 @@ class NukeOCIOColorSpace(NukeNodeBase):
         """Transform image from one color space to another using OCIO."""
 
         if not OCIO_AVAILABLE:
-            print("[NukeOCIO] OpenColorIO not installed. Install with: pip install opencolorio")
+            print(
+                "[NukeOCIO] OpenColorIO not installed. Install with: pip install opencolorio"
+            )
             return (image,)
 
         # Skip if same color space
@@ -384,7 +416,9 @@ class NukeOCIOColorSpace(NukeNodeBase):
         config = OCIO_CONFIG
 
         if config is None:
-            print("[NukeOCIO] No OCIO config available. Upgrade OpenColorIO: pip install opencolorio --upgrade")
+            print(
+                "[NukeOCIO] No OCIO config available. Upgrade OpenColorIO: pip install opencolorio --upgrade"
+            )
             return (image,)
 
         # Ensure batch dimension
@@ -399,10 +433,7 @@ class NukeOCIOColorSpace(NukeNodeBase):
 
             # Apply OCIO transform
             transformed = apply_ocio_transform(
-                img_np,
-                in_colorspace,
-                out_colorspace,
-                config
+                img_np, in_colorspace, out_colorspace, config
             )
 
             results.append(transformed)
@@ -433,7 +464,12 @@ class NukeOCIODisplay(NukeNodeBase):
     @classmethod
     def INPUT_TYPES(cls):
         # Use hardcoded colorspaces and get displays/views from cached config
-        displays = ["sRGB - Display", "Rec.1886 Rec.709 - Display", "P3-D65 - Display", "Rec.2100-PQ - Display"]
+        displays = [
+            "sRGB - Display",
+            "Rec.1886 Rec.709 - Display",
+            "P3-D65 - Display",
+            "Rec.2100-PQ - Display",
+        ]
         views = ["ACES 2.0 - SDR Video", "Raw"]
         input_colorspaces = ACES_STUDIO_COLORSPACES
 
@@ -448,9 +484,18 @@ class NukeOCIODisplay(NukeNodeBase):
         return {
             "required": {
                 "image": ("IMAGE",),
-                "config": (["ACES 2.0 Studio Config"], {"default": "ACES 2.0 Studio Config"}),
-                "display": (displays, {"default": displays[0] if displays else "sRGB - Display"}),
-                "view": (views, {"default": views[0] if views else "ACES 2.0 - SDR Video"}),
+                "config": (
+                    ["ACES 2.0 Studio Config"],
+                    {"default": "ACES 2.0 Studio Config"},
+                ),
+                "display": (
+                    displays,
+                    {"default": displays[0] if displays else "sRGB - Display"},
+                ),
+                "view": (
+                    views,
+                    {"default": views[0] if views else "ACES 2.0 - SDR Video"},
+                ),
                 "input_colorspace": (input_colorspaces, {"default": "ACEScg"}),
                 "invert": (["forward", "inverse"], {"default": "forward"}),
             },
@@ -464,7 +509,9 @@ class NukeOCIODisplay(NukeNodeBase):
     def IS_CHANGED(cls, **kwargs):
         return float("nan")
 
-    def apply_display(self, image, config, display, view, input_colorspace, invert="forward"):
+    def apply_display(
+        self, image, config, display, view, input_colorspace, invert="forward"
+    ):
         """Apply display/view transform using OCIO.
 
         Args:
@@ -473,7 +520,9 @@ class NukeOCIODisplay(NukeNodeBase):
         """
 
         if not OCIO_AVAILABLE:
-            print("[NukeOCIO] OpenColorIO not installed. Install with: pip install opencolorio")
+            print(
+                "[NukeOCIO] OpenColorIO not installed. Install with: pip install opencolorio"
+            )
             return (image,)
 
         # Use cached Studio Config
@@ -491,7 +540,11 @@ class NukeOCIODisplay(NukeNodeBase):
             transform.setView(view)
 
             # Set transform direction
-            direction = OCIO.TRANSFORM_DIR_INVERSE if invert == "inverse" else OCIO.TRANSFORM_DIR_FORWARD
+            direction = (
+                OCIO.TRANSFORM_DIR_INVERSE
+                if invert == "inverse"
+                else OCIO.TRANSFORM_DIR_FORWARD
+            )
             processor = config.getProcessor(transform, direction)
             cpu_processor = processor.getDefaultCPUProcessor()
 
@@ -510,7 +563,11 @@ class NukeOCIODisplay(NukeNodeBase):
                     rgb = img_np[:, :, :3].copy()
                     alpha = img_np[:, :, 3:4].copy()
                 else:
-                    rgb = img_np[:, :, :3].copy() if channels >= 3 else np.stack([img_np] * 3, axis=-1)
+                    rgb = (
+                        img_np[:, :, :3].copy()
+                        if channels >= 3
+                        else np.stack([img_np] * 3, axis=-1)
+                    )
                     alpha = None
 
                 # Flatten and apply
@@ -524,7 +581,7 @@ class NukeOCIODisplay(NukeNodeBase):
                     OCIO.BIT_DEPTH_F32,
                     rgb_flat.strides[1],
                     rgb_flat.strides[0],
-                    width * rgb_flat.strides[0]
+                    width * rgb_flat.strides[0],
                 )
 
                 cpu_processor.apply(img_desc)
@@ -575,7 +632,9 @@ class NukeOCIOInfo(NukeNodeBase):
         """Get OCIO configuration information."""
 
         if not OCIO_AVAILABLE:
-            return ("OpenColorIO not installed.\n\nInstall with:\npip install opencolorio",)
+            return (
+                "OpenColorIO not installed.\n\nInstall with:\npip install opencolorio",
+            )
 
         # Use cached Studio Config
         config = OCIO_CONFIG
@@ -644,13 +703,23 @@ class NukeOCIOInfo(NukeNodeBase):
 
 # LUT directory (shared with VectorField)
 from pathlib import Path as _Path
+
 _MODULE_DIR = _Path(__file__).parent
 _LUTS_DIR = _MODULE_DIR / "luts"
 
 # Supported LUT formats for OCIO FileTransform
 _OCIO_LUT_EXTENSIONS = {
-    ".3dl", ".ccc", ".cc", ".csp", ".cube", ".lut",
-    ".spi1d", ".spi3d", ".spimtx", ".cub", ".vf",
+    ".3dl",
+    ".ccc",
+    ".cc",
+    ".csp",
+    ".cube",
+    ".lut",
+    ".spi1d",
+    ".spi3d",
+    ".spimtx",
+    ".cub",
+    ".vf",
 }
 
 
@@ -709,26 +778,38 @@ class NukeOCIOFileTransform(NukeNodeBase):
         return {
             "required": {
                 "image": ("IMAGE",),
-                "lut_file": (lut_files, {
-                    "default": lut_files[0] if lut_files else "No LUTs found",
-                }),
+                "lut_file": (
+                    lut_files,
+                    {
+                        "default": lut_files[0] if lut_files else "No LUTs found",
+                    },
+                ),
                 "direction": (["forward", "inverse"], {"default": "forward"}),
-                "interpolation": (["default", "nearest", "linear", "tetrahedral", "best"], {
-                    "default": "default",
-                }),
-                "mix": ("FLOAT", {
-                    "default": 1.0,
-                    "min": 0.0,
-                    "max": 1.0,
-                    "step": 0.01,
-                }),
+                "interpolation": (
+                    ["default", "nearest", "linear", "tetrahedral", "best"],
+                    {
+                        "default": "default",
+                    },
+                ),
+                "mix": (
+                    "FLOAT",
+                    {
+                        "default": 1.0,
+                        "min": 0.0,
+                        "max": 1.0,
+                        "step": 0.01,
+                    },
+                ),
             },
             "optional": {
-                "custom_lut_path": ("STRING", {
-                    "default": "",
-                    "multiline": False,
-                    "placeholder": "Optional: absolute path to a LUT file",
-                }),
+                "custom_lut_path": (
+                    "STRING",
+                    {
+                        "default": "",
+                        "multiline": False,
+                        "placeholder": "Optional: absolute path to a LUT file",
+                    },
+                ),
             },
         }
 
@@ -740,14 +821,22 @@ class NukeOCIOFileTransform(NukeNodeBase):
     def IS_CHANGED(cls, **kwargs):
         return float("nan")
 
-    def apply_file_transform(self, image, lut_file, direction="forward",
-                             interpolation="default", mix=1.0,
-                             custom_lut_path=""):
+    def apply_file_transform(
+        self,
+        image,
+        lut_file,
+        direction="forward",
+        interpolation="default",
+        mix=1.0,
+        custom_lut_path="",
+    ):
         """Apply an OCIO FileTransform LUT to the input image."""
 
         if not OCIO_AVAILABLE:
-            print("[NukeOCIOFileTransform] OpenColorIO not installed. "
-                  "Install with: pip install opencolorio")
+            print(
+                "[NukeOCIOFileTransform] OpenColorIO not installed. "
+                "Install with: pip install opencolorio"
+            )
             return (image,)
 
         # Determine LUT file path
@@ -774,9 +863,11 @@ class NukeOCIOFileTransform(NukeNodeBase):
             file_transform.setInterpolation(interp_value)
 
             # Set direction
-            ocio_direction = (OCIO.TRANSFORM_DIR_INVERSE
-                              if direction == "inverse"
-                              else OCIO.TRANSFORM_DIR_FORWARD)
+            ocio_direction = (
+                OCIO.TRANSFORM_DIR_INVERSE
+                if direction == "inverse"
+                else OCIO.TRANSFORM_DIR_FORWARD
+            )
 
             # Create a minimal config that can process the FileTransform
             config = OCIO.Config.CreateRaw()
@@ -825,7 +916,9 @@ class NukeOCIOFileTransform(NukeNodeBase):
                 # Apply mix
                 if mix < 1.0:
                     rgb_original = img_np[:, :, :3]
-                    rgb_transformed = rgb_original + mix * (rgb_transformed - rgb_original)
+                    rgb_transformed = rgb_original + mix * (
+                        rgb_transformed - rgb_original
+                    )
 
                 # Recombine alpha
                 if alpha is not None:

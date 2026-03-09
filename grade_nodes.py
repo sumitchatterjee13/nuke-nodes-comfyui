@@ -128,24 +128,30 @@ class NukeGrade(NukeNodeBase):
         final_lift_r = lift + lift_r_offset
         final_lift_g = lift + lift_g_offset
         final_lift_b = lift + lift_b_offset
-        
+
         final_gamma_r = gamma + gamma_r_offset
         final_gamma_g = gamma + gamma_g_offset
         final_gamma_b = gamma + gamma_b_offset
-        
+
         final_gain_r = gain + gain_r_offset
         final_gain_g = gain + gain_g_offset
         final_gain_b = gain + gain_b_offset
 
         # Create color correction vectors
         lift_vec = torch.tensor(
-            [final_lift_r, final_lift_g, final_lift_b], device=rgb.device, dtype=rgb.dtype
+            [final_lift_r, final_lift_g, final_lift_b],
+            device=rgb.device,
+            dtype=rgb.dtype,
         ).view(1, 1, 1, 3)
         gamma_vec = torch.tensor(
-            [final_gamma_r, final_gamma_g, final_gamma_b], device=rgb.device, dtype=rgb.dtype
+            [final_gamma_r, final_gamma_g, final_gamma_b],
+            device=rgb.device,
+            dtype=rgb.dtype,
         ).view(1, 1, 1, 3)
         gain_vec = torch.tensor(
-            [final_gain_r, final_gain_g, final_gain_b], device=rgb.device, dtype=rgb.dtype
+            [final_gain_r, final_gain_g, final_gain_b],
+            device=rgb.device,
+            dtype=rgb.dtype,
         ).view(1, 1, 1, 3)
 
         # Apply lift/gamma/gain formula: ((rgb + lift) ^ (1/gamma)) * gain
@@ -508,7 +514,7 @@ class NukeExposure(NukeNodeBase):
         # Calculate exposure multiplier based on type
         if exposure_type == "stops":
             # F-stops: 2^stops
-            exposure_multiplier = 2.0 ** stops
+            exposure_multiplier = 2.0**stops
         elif exposure_type == "printer_lights":
             # Printer lights: 10^(stops/25) (typical printer light conversion)
             exposure_multiplier = 10.0 ** (stops / 25.0)
@@ -517,7 +523,7 @@ class NukeExposure(NukeNodeBase):
             exposure_multiplier = 10.0 ** (-stops)
         else:
             # Default to f-stops
-            exposure_multiplier = 2.0 ** stops
+            exposure_multiplier = 2.0**stops
 
         # Apply exposure adjustment
         rgb_exposed = rgb * exposure_multiplier
@@ -644,13 +650,13 @@ class NukeExposureAdvanced(NukeNodeBase):
         # Calculate exposure multipliers based on type
         def calculate_multiplier(stop_value):
             if exposure_type == "stops":
-                return 2.0 ** stop_value
+                return 2.0**stop_value
             elif exposure_type == "printer_lights":
                 return 10.0 ** (stop_value / 25.0)
             elif exposure_type == "film_density":
                 return 10.0 ** (-stop_value)
             else:
-                return 2.0 ** stop_value
+                return 2.0**stop_value
 
         multiplier_r = calculate_multiplier(final_stops_r)
         multiplier_g = calculate_multiplier(final_stops_g)

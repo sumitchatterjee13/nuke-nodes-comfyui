@@ -16,6 +16,7 @@ import torch
 # Try to import OCIO for direct testing
 try:
     import PyOpenColorIO as OCIO
+
     HAS_OCIO = True
 except ImportError:
     OCIO = None
@@ -25,6 +26,7 @@ except ImportError:
 # ============================================================================
 # Helper functions (reimplemented to avoid package import issues)
 # ============================================================================
+
 
 def get_ocio_config(config_path=None, builtin_config=None):
     """
@@ -134,7 +136,7 @@ def apply_ocio_transform(image_np, src_colorspace, dst_colorspace, config):
             OCIO.BIT_DEPTH_F32,
             rgb_flat.strides[1],
             rgb_flat.strides[0],
-            width * rgb_flat.strides[0]
+            width * rgb_flat.strides[0],
         )
 
         cpu_processor.apply(img_desc)
@@ -172,6 +174,7 @@ COMMON_COLORSPACES = [
 # Test Classes
 # ============================================================================
 
+
 class TestOCIOAvailability(unittest.TestCase):
     """Test OpenColorIO availability and basic setup."""
 
@@ -192,9 +195,10 @@ class TestOCIOAvailability(unittest.TestCase):
     def test_ocio_version_number(self):
         """Test OCIO version is 2.x or higher for ACES 2.0 support."""
         version = OCIO.GetVersion()
-        major_version = int(version.split('.')[0])
-        self.assertGreaterEqual(major_version, 2,
-            "OCIO 2.x or higher required for full ACES 2.0 support")
+        major_version = int(version.split(".")[0])
+        self.assertGreaterEqual(
+            major_version, 2, "OCIO 2.x or higher required for full ACES 2.0 support"
+        )
 
 
 class TestOCIOConfig(unittest.TestCase):
@@ -276,7 +280,9 @@ class TestACES2Support(unittest.TestCase):
         print(f"Found ACES spaces: {found_aces}")
         # Skip if no ACES config available (built-in ACES configs may not be installed)
         if len(found_aces) == 0:
-            print("Note: No ACES color spaces found. Set OCIO env var to an ACES config for full testing.")
+            print(
+                "Note: No ACES color spaces found. Set OCIO env var to an ACES config for full testing."
+            )
             self.skipTest("No ACES color spaces in config - need ACES OCIO config")
 
     @unittest.skipUnless(HAS_OCIO, "OpenColorIO not installed")
@@ -360,7 +366,11 @@ class TestColorSpaceTransform(unittest.TestCase):
             name_lower = name.lower()
             if "srgb" in name_lower and "texture" in name_lower:
                 srgb_space = name
-            elif "linear" in name_lower and ("srgb" in name_lower or "rec.709" in name_lower or "rec709" in name_lower):
+            elif "linear" in name_lower and (
+                "srgb" in name_lower
+                or "rec.709" in name_lower
+                or "rec709" in name_lower
+            ):
                 linear_space = name
 
         if not srgb_space or not linear_space:
@@ -378,15 +388,14 @@ class TestColorSpaceTransform(unittest.TestCase):
         print(f"Testing transform: {srgb_space} -> {linear_space}")
 
         result = apply_ocio_transform(
-            self.test_image.copy(),
-            srgb_space,
-            linear_space,
-            config
+            self.test_image.copy(), srgb_space, linear_space, config
         )
 
         # Result should be different from input (sRGB gamma removed)
-        self.assertFalse(np.allclose(result, self.test_image, atol=0.01),
-            "Transformation should change pixel values")
+        self.assertFalse(
+            np.allclose(result, self.test_image, atol=0.01),
+            "Transformation should change pixel values",
+        )
 
         # Linear values should be lower for mid-tones (gamma expansion)
         mid_value_input = self.test_image[32, 32, 0]
@@ -394,8 +403,11 @@ class TestColorSpaceTransform(unittest.TestCase):
         print(f"Mid-tone value: {mid_value_input:.4f} -> {mid_value_output:.4f}")
 
         # For sRGB to linear, mid-tones should decrease
-        self.assertLess(mid_value_output, mid_value_input,
-            "Linear mid-tones should be lower than sRGB")
+        self.assertLess(
+            mid_value_output,
+            mid_value_input,
+            "Linear mid-tones should be lower than sRGB",
+        )
 
     @unittest.skipUnless(HAS_OCIO, "OpenColorIO not installed")
     def test_transform_preserves_alpha(self):
@@ -412,10 +424,7 @@ class TestColorSpaceTransform(unittest.TestCase):
         self.test_image_rgba[:, :, 3] = 0.75
 
         result = apply_ocio_transform(
-            self.test_image_rgba.copy(),
-            names[0],
-            names[1],
-            config
+            self.test_image_rgba.copy(), names[0], names[1], config
         )
 
         # Alpha should be unchanged
@@ -423,7 +432,7 @@ class TestColorSpaceTransform(unittest.TestCase):
             result[:, :, 3],
             self.test_image_rgba[:, :, 3],
             decimal=5,
-            err_msg="Alpha channel should be preserved"
+            err_msg="Alpha channel should be preserved",
         )
 
     @unittest.skipUnless(HAS_OCIO, "OpenColorIO not installed")
@@ -439,17 +448,14 @@ class TestColorSpaceTransform(unittest.TestCase):
 
         # Transform to same color space
         result = apply_ocio_transform(
-            self.test_image.copy(),
-            names[0],
-            names[0],
-            config
+            self.test_image.copy(), names[0], names[0], config
         )
 
         np.testing.assert_array_almost_equal(
             result,
             self.test_image,
             decimal=5,
-            err_msg="Same-to-same transform should be identity"
+            err_msg="Same-to-same transform should be identity",
         )
 
     @unittest.skipUnless(HAS_OCIO, "OpenColorIO not installed")
@@ -468,26 +474,18 @@ class TestColorSpaceTransform(unittest.TestCase):
 
         # Forward transform
         forward = apply_ocio_transform(
-            self.color_image.copy(),
-            src_space,
-            dst_space,
-            config
+            self.color_image.copy(), src_space, dst_space, config
         )
 
         # Inverse transform
-        roundtrip = apply_ocio_transform(
-            forward.copy(),
-            dst_space,
-            src_space,
-            config
-        )
+        roundtrip = apply_ocio_transform(forward.copy(), dst_space, src_space, config)
 
         # Should be close to original
         np.testing.assert_array_almost_equal(
             roundtrip,
             self.color_image,
             decimal=4,
-            err_msg=f"Roundtrip {src_space} -> {dst_space} -> {src_space} should preserve values"
+            err_msg=f"Roundtrip {src_space} -> {dst_space} -> {src_space} should preserve values",
         )
 
     @unittest.skipUnless(HAS_OCIO, "OpenColorIO not installed")
@@ -604,7 +602,9 @@ class TestEdgeCases(unittest.TestCase):
         # Should preserve 4 channels
         self.assertEqual(result.shape[-1], 4)
         # Alpha should be unchanged
-        np.testing.assert_array_almost_equal(result[:, :, 3], rgba_image[:, :, 3], decimal=5)
+        np.testing.assert_array_almost_equal(
+            result[:, :, 3], rgba_image[:, :, 3], decimal=5
+        )
 
     @unittest.skipUnless(HAS_OCIO, "OpenColorIO not installed")
     def test_out_of_range_values(self):
@@ -725,18 +725,22 @@ class TestDisplayTransform(unittest.TestCase):
 
             img_desc = OCIO.PackedImageDesc(
                 rgb_flat,
-                32, 32, 3,
+                32,
+                32,
+                3,
                 OCIO.BIT_DEPTH_F32,
                 rgb_flat.strides[1],
                 rgb_flat.strides[0],
-                32 * rgb_flat.strides[0]
+                32 * rgb_flat.strides[0],
             )
 
             cpu_processor.apply(img_desc)
 
             result = rgb_flat.reshape(32, 32, 3)
             self.assertTrue(np.all(np.isfinite(result)))
-            print(f"Display transform applied successfully. Output range: [{result.min():.3f}, {result.max():.3f}]")
+            print(
+                f"Display transform applied successfully. Output range: [{result.min():.3f}, {result.max():.3f}]"
+            )
 
         except Exception as e:
             self.fail(f"Display transform failed: {e}")

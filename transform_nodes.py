@@ -82,7 +82,19 @@ class NukeTransform(NukeNodeBase):
                     {"default": -1.0, "min": -4096.0, "max": 8192.0, "step": 1.0},
                 ),
                 "filter": (
-                    ["impulse", "cubic", "keys", "simon", "rifman", "mitchell", "parzen", "notch", "lanczos4", "lanczos6", "sinc4"],
+                    [
+                        "impulse",
+                        "cubic",
+                        "keys",
+                        "simon",
+                        "rifman",
+                        "mitchell",
+                        "parzen",
+                        "notch",
+                        "lanczos4",
+                        "lanczos6",
+                        "sinc4",
+                    ],
                     {"default": "cubic"},
                 ),
                 "invert": ("BOOLEAN", {"default": False}),
@@ -156,7 +168,9 @@ class NukeTransform(NukeNodeBase):
         )
 
         # Create sampling grid
-        grid = self._create_sampling_grid(transform_matrix, height, width, img.device, invert)
+        grid = self._create_sampling_grid(
+            transform_matrix, height, width, img.device, invert
+        )
 
         # Apply transformation with proper filter
         # PyTorch grid_sample only supports nearest and bilinear
@@ -176,7 +190,20 @@ class NukeTransform(NukeNodeBase):
         return (normalize_tensor(result),)
 
     def _create_transform_matrix(
-        self, tx, ty, rotate, sx, sy, skx, sky, skew_order, cx, cy, width, height, invert
+        self,
+        tx,
+        ty,
+        rotate,
+        sx,
+        sy,
+        skx,
+        sky,
+        skew_order,
+        cx,
+        cy,
+        width,
+        height,
+        invert,
     ):
         """
         Create 2D transformation matrix matching Nuke's order:
@@ -192,9 +219,7 @@ class NukeTransform(NukeNodeBase):
         skew_y_rad = math.radians(sky)
 
         # Translation to center (move center to origin)
-        T1 = torch.tensor(
-            [[1, 0, -cx], [0, 1, -cy], [0, 0, 1]], dtype=torch.float32
-        )
+        T1 = torch.tensor([[1, 0, -cx], [0, 1, -cy], [0, 0, 1]], dtype=torch.float32)
 
         # Scale matrix
         S = torch.tensor([[sx, 0, 0], [0, sy, 0], [0, 0, 1]], dtype=torch.float32)
@@ -258,10 +283,13 @@ class NukeTransform(NukeNodeBase):
         transform_matrix = transform_matrix.to(device)
 
         # Build full 3x3 matrix for inversion
-        full_matrix = torch.cat([
-            transform_matrix,
-            torch.tensor([[0, 0, 1]], device=device, dtype=torch.float32)
-        ], dim=0)
+        full_matrix = torch.cat(
+            [
+                transform_matrix,
+                torch.tensor([[0, 0, 1]], device=device, dtype=torch.float32),
+            ],
+            dim=0,
+        )
 
         try:
             inv_matrix = torch.inverse(full_matrix)[:2, :3]

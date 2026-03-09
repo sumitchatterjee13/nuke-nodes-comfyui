@@ -136,15 +136,16 @@ def show_version_info():
     """Show version information"""
     try:
         from version import get_full_version
+
         version_info = get_full_version()
         print(f"📦 Package: {version_info['title']} v{version_info['version']}")
         print(f"📝 Description: {version_info['description']}")
         print(f"👨‍💻 Author: {version_info['author']}")
         print(f"📅 Release Date: {version_info['release_date']}")
         print(f"📄 License: {version_info['license']}")
-        if version_info['is_stable']:
+        if version_info["is_stable"]:
             print("✅ Status: Stable Release")
-        elif version_info['is_beta']:
+        elif version_info["is_beta"]:
             print("🧪 Status: Beta Release")
         else:
             print("🚧 Status: Development Version")
@@ -158,7 +159,7 @@ def main():
     """Main setup function"""
     print("🔧 Nuke Nodes for ComfyUI - Setup & Verification")
     print("=" * 50)
-    
+
     # Show version information
     print()
     show_version_info()

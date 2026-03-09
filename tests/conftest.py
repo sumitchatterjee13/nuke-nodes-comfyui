@@ -17,6 +17,9 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 def pytest_ignore_collect(collection_path, config):
     """Ignore the package __init__.py during collection."""
-    if collection_path.name == "__init__.py" and collection_path.parent.name == "nuke-nodes":
+    if (
+        collection_path.name == "__init__.py"
+        and collection_path.parent.name == "nuke-nodes"
+    ):
         return True
     return False
