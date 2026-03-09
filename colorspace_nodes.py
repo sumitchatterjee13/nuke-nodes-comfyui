@@ -24,7 +24,7 @@ Requires: pip install opencolorio (version 2.2+ recommended)
 """
 
 import os
-from typing import List, Tuple, Optional, Dict
+from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 import torch

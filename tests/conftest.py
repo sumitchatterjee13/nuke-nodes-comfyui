@@ -5,8 +5,8 @@ This file ensures pytest can run tests without importing the main package,
 which has relative imports that fail when run standalone.
 """
 
-import sys
 import os
+import sys
 
 # Ensure tests directory is in path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))

@@ -59,6 +59,9 @@ exclude = ["tests*", "docs*", "examples*"]
 line-length = 88
 target-version = ['py38', 'py39', 'py310', 'py311']
 
+[tool.isort]
+profile = "black"
+
 [tool.mypy]
 python_version = "3.8"
 warn_return_any = true

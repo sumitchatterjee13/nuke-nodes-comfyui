@@ -24,16 +24,16 @@ Sequence patterns supported:
 - Frame ranges: 1-100, 1-100x2 (every 2nd frame)
 """
 
+import glob
 import os
 import re
-import glob
 from pathlib import Path
-from typing import List, Tuple, Optional, Dict, Union
+from typing import Dict, List, Optional, Tuple, Union
 
+import folder_paths
 import numpy as np
 import torch
 
-import folder_paths
 from .utils import NukeNodeBase, ensure_batch_dim, normalize_tensor
 
 # Try to import OpenImageIO

@@ -15,13 +15,12 @@ LUT files should be placed in the ./luts folder relative to this package.
 
 import os
 from pathlib import Path
-from typing import List, Tuple, Optional, Dict, Union
+from typing import Dict, List, Optional, Tuple, Union
 
 import numpy as np
 import torch
 
 from .utils import NukeNodeBase, ensure_batch_dim, normalize_tensor
-
 
 # Get the directory where this module is located
 MODULE_DIR = Path(__file__).parent
