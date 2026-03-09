@@ -1273,10 +1273,15 @@ class NukeWrite(NukeNodeBase):
                                  np.power((pixels + 0.055) / 1.055, 2.4))
 
             # Prepare metadata
+            # RAW: only tag EXR as linear (convention), skip for other formats
+            # to avoid misleading viewers (e.g., PNG tagged linear displays too bright)
             metadata = {
                 "Software": "ComfyUI Nuke Nodes",
-                "oiio:ColorSpace": colorspace if colorspace != "raw" else "linear",
             }
+            if colorspace != "raw":
+                metadata["oiio:ColorSpace"] = colorspace
+            elif file_type == "exr":
+                metadata["oiio:ColorSpace"] = "linear"
 
             # Write the image
             success = write_image(output_path, pixels, bit_depth, compression, metadata)
