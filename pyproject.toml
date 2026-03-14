@@ -4,40 +4,17 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "nuke-nodes"
-version = "1.0.0"
 description = "ComfyUI custom nodes that replicate Nuke compositing functionality"
-authors = [
-    {name = "Nuke Nodes Team"}
-]
+version = "1.0.0"
 license = {file = "LICENSE"}
-readme = "README.md"
-requires-python = ">=3.8"
+requires-python = ">=3.9"
+dynamic = ["dependencies"]
 classifiers = [
-    "Development Status :: 4 - Beta",
-    "Intended Audience :: Developers",
-    "Topic :: Software Development :: Libraries :: Python Modules",
-    "Topic :: Multimedia :: Graphics :: Graphics Conversion",
-    "License :: OSI Approved :: MIT License",
-    "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.8",
-    "Programming Language :: Python :: 3.9",
-    "Programming Language :: Python :: 3.10",
-    "Programming Language :: Python :: 3.11",
-    "Programming Language :: Python :: 3.12",
+    "Operating System :: OS Independent",
 ]
-dependencies = [
-    "torch>=1.9.0",
-    "numpy>=1.21.0",
-    "opencv-python>=4.5.0"
-]
-keywords = ["ComfyUI", "nodes", "compositing", "Nuke", "image processing"]
 
 [project.urls]
-Homepage = "https://github.com/your-username/nuke-nodes"
-Documentation = "https://github.com/your-username/nuke-nodes/blob/main/docs/"
-Repository = "https://github.com/your-username/nuke-nodes"
-"Bug Reports" = "https://github.com/your-username/nuke-nodes/issues"
-Changelog = "https://github.com/your-username/nuke-nodes/blob/main/CHANGELOG.md"
+Repository = "https://github.com/sumitchatterjee13/nuke-nodes-comfyui"
 
 [project.optional-dependencies]
 dev = [
@@ -47,6 +24,9 @@ dev = [
     "mypy>=0.910"
 ]
 
+[tool.setuptools.dynamic]
+dependencies = {file = ["requirements.txt"]}
+
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["*"]
@@ -54,6 +34,10 @@ exclude = ["tests*", "docs*", "examples*"]
 
 [tool.setuptools.package-data]
 "*" = ["*.md", "*.txt", "*.json", "*.yaml", "*.yml"]
+
+[tool.comfy]
+PublisherId = "sumit"
+DisplayName = "Nuke Nodes"
 
 [tool.black]
 line-length = 88

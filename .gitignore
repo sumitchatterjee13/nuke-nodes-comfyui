@@ -109,3 +109,6 @@ dmypy.json
 # OS
 .DS_Store
 Thumbs.db
+
+# Instruction files
+comfyui-updated-instruction.md

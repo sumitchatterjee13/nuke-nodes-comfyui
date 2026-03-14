@@ -9,11 +9,11 @@ __version_info__ = tuple(int(part) for part in __version__.split("."))
 # Package metadata
 __title__ = "nuke-nodes"
 __description__ = "ComfyUI custom nodes that replicate Nuke compositing functionality"
-__author__ = "Nuke Nodes Team"
+__author__ = "Sumit Chatterjee"
 __author_email__ = "contact@example.com"
 __license__ = "MIT"
 __url__ = "https://github.com/your-username/nuke-nodes"
-__copyright__ = "Copyright 2024 Nuke Nodes Team"
+__copyright__ = "Copyright 2024 Sumit Chatterjee"
 
 # ComfyUI specific information
 COMFYUI_MIN_VERSION = "0.1.0"

@@ -6,7 +6,6 @@ Helps verify installation and dependencies
 
 import importlib
 import os
-import subprocess
 import sys
 
 
@@ -51,31 +50,19 @@ def check_dependencies():
 
 
 def install_dependencies(missing):
-    """Install missing dependencies (excluding PyTorch which should come from ComfyUI)"""
+    """Report missing dependencies to the user.
+
+    Dependencies are managed via requirements.txt and installed automatically
+    by the ComfyUI Manager. Manual pip install via subprocess is not used.
+    """
     if not missing:
         return True
 
-    print(f"\n📦 Installing missing dependencies: {', '.join(missing)}")
-
-    # Map module names to pip package names (excluding torch which should come from ComfyUI)
-    package_map = {"numpy": "numpy", "cv2": "opencv-python"}
-
-    # Filter out torch from missing dependencies as it should come from ComfyUI
-    safe_missing = [dep for dep in missing if dep != "torch"]
-
-    if not safe_missing:
-        print("✅ No additional dependencies needed")
-        return True
-
-    packages = [package_map.get(dep, dep) for dep in safe_missing]
-
-    try:
-        subprocess.check_call([sys.executable, "-m", "pip", "install"] + packages)
-        print("✅ Dependencies installed successfully")
-        return True
-    except subprocess.CalledProcessError as e:
-        print(f"❌ Failed to install dependencies: {e}")
-        return False
+    print(f"\n⚠️  Missing dependencies: {', '.join(missing)}")
+    print("   Dependencies are listed in requirements.txt and will be installed")
+    print("   automatically by the ComfyUI Manager.")
+    print("   If installing manually, run: pip install -r requirements.txt")
+    return False
 
 
 def check_comfyui_structure():
@@ -173,12 +160,7 @@ def main():
     missing = check_dependencies()
 
     if missing:
-        install = input(f"\nInstall missing dependencies? (y/n): ")
-        if install.lower() == "y":
-            if not install_dependencies(missing):
-                return False
-        else:
-            print("⚠️  Some dependencies are missing. Nodes may not work properly.")
+        install_dependencies(missing)
 
     print("\n📁 Checking file structure...")
     check_comfyui_structure()
