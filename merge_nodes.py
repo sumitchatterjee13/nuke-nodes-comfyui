@@ -404,6 +404,131 @@ class NukeMix(NukeNodeBase):
         return (normalize_tensor(result),)
 
 
+class NukeKeymix(NukeNodeBase):
+    """Keymix - blend two images using a mask, matching Nuke's Keymix node.
+
+    Output formula:
+        result = A * mask + B * (1 - mask)
+
+    Where A is the foreground (mask=1 region) and B is the background
+    (mask=0 region). At each pixel the mask value is the alpha-style
+    blend ratio between A and B — so a soft mask gives a smooth
+    transition between the two images.
+
+    Differences from NukeMerge with a mask:
+      - NukeMerge does a blend OPERATION (over, multiply, screen, ...)
+        and the mask gates how much of that blended result replaces B.
+      - NukeKeymix does a pure linear interpolation between A and B
+        using the mask as the alpha. No blend operation.
+
+    A is resized to B's resolution if they differ (Nuke convention).
+    The mask is resized to match.
+    """
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "A": ("IMAGE",),  # Foreground (full at mask=1)
+                "B": ("IMAGE",),  # Background (full at mask=0)
+                "mask": ("MASK",),
+                "invert_mask": (
+                    "BOOLEAN",
+                    {
+                        "default": False,
+                        "tooltip": "Invert the mask (swap A and B at every pixel).",
+                    },
+                ),
+                "mix": (
+                    "FLOAT",
+                    {
+                        "default": 1.0, "min": 0.0, "max": 1.0, "step": 0.01,
+                        "tooltip": (
+                            "Overall opacity of the keymix. mix=0 returns "
+                            "B unchanged; mix=1 applies the full mask blend; "
+                            "intermediate values blend toward B."
+                        ),
+                    },
+                ),
+            },
+        }
+
+    RETURN_TYPES = ("IMAGE",)
+    FUNCTION = "keymix"
+    CATEGORY = "Nuke/Merge"
+
+    def keymix(self, A, B, mask, invert_mask, mix):
+        """Linear interpolation between A and B driven by the mask."""
+        a = ensure_batch_dim(A)
+        b = ensure_batch_dim(B)
+
+        # Resize A to match B's resolution (Nuke convention — B defines the output bbox)
+        if a.shape[1:3] != b.shape[1:3]:
+            target_h, target_w = b.shape[1], b.shape[2]
+            a = F.interpolate(
+                a.permute(0, 3, 1, 2),
+                size=(target_h, target_w),
+                mode="bilinear",
+                align_corners=False,
+            ).permute(0, 2, 3, 1)
+
+        # Match channel counts: pad whichever is smaller with alpha=1.
+        # If both are RGB (3 ch) the result is RGB; if either is RGBA
+        # the result is RGBA. Mirrors NukeMerge's behavior.
+        a_ch = a.shape[3]
+        b_ch = b.shape[3]
+        if a_ch < b_ch:
+            pad = torch.ones(
+                (a.shape[0], a.shape[1], a.shape[2], b_ch - a_ch),
+                dtype=a.dtype, device=a.device,
+            )
+            a = torch.cat([a, pad], dim=3)
+        elif b_ch < a_ch:
+            pad = torch.ones(
+                (b.shape[0], b.shape[1], b.shape[2], a_ch - b_ch),
+                dtype=b.dtype, device=b.device,
+            )
+            b = torch.cat([b, pad], dim=3)
+
+        # Normalize mask to (B, H, W, 1)
+        if mask.dim() == 2:
+            m = mask.unsqueeze(0).unsqueeze(-1)
+        elif mask.dim() == 3:
+            m = mask.unsqueeze(-1)
+        elif mask.dim() == 4:
+            # Take first channel if a multi-channel "mask" was passed
+            m = mask[..., :1]
+        else:
+            raise ValueError(f"Unsupported mask shape: {tuple(mask.shape)}")
+
+        # Resize mask to match the output resolution
+        if m.shape[1:3] != b.shape[1:3]:
+            m = F.interpolate(
+                m.permute(0, 3, 1, 2),
+                size=(b.shape[1], b.shape[2]),
+                mode="bilinear",
+                align_corners=False,
+            ).permute(0, 2, 3, 1)
+
+        # Broadcast mask across batch if user passed a single mask for
+        # multiple frames (common when piping a static matte into a
+        # multi-frame latent).
+        if m.shape[0] == 1 and b.shape[0] > 1:
+            m = m.expand(b.shape[0], -1, -1, -1)
+
+        # Optional invert
+        if invert_mask:
+            m = 1.0 - m
+
+        # Apply overall mix as a multiplier on the mask. mix=0 leaves
+        # everything as B; mix=1 honors the mask exactly.
+        m_eff = m * float(mix)
+
+        # Keymix: linear interpolation between A and B
+        result = a * m_eff + b * (1.0 - m_eff)
+        return (result,)
+
+
 class NukeConstant(NukeNodeBase):
     """
     Constant node that generates a solid color image, similar to Nuke's Constant node.
@@ -491,11 +616,13 @@ class NukeConstant(NukeNodeBase):
 NODE_CLASS_MAPPINGS = {
     "NukeMerge": NukeMerge,
     "NukeMix": NukeMix,
+    "NukeKeymix": NukeKeymix,
     "NukeConstant": NukeConstant,
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
     "NukeMerge": "Nuke Merge",
     "NukeMix": "Nuke Mix",
+    "NukeKeymix": "Nuke Keymix",
     "NukeConstant": "Nuke Constant",
 }

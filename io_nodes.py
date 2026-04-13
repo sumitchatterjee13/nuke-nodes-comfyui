@@ -34,6 +34,81 @@ import folder_paths
 import numpy as np
 import torch
 
+
+# ============================================================================
+# No-CAT primary-rotation matrices for Rec.709 <-> ACEScg (AP1)
+# ============================================================================
+#
+# Built from chromaticity coordinates at D65 for both spaces — i.e. NO
+# chromatic adaptation, matching Nuke's non-OCIO (legacy / nuke-default)
+# behavior. The strict-spec ACEScg whitepoint is D60, but Nuke and most
+# legacy VFX pipelines treat it as D65 to keep round-trips bit-exact and
+# avoid the asymmetric blue-channel drift that Bradford CAT introduces.
+#
+# Same math as nuke_compat.py in the HDR VACE pipeline tools — keeps the
+# Read/Write nodes consistent with that convention so a file written by
+# this Write node and re-read by this Read node (or by Nuke's Read in
+# nuke-default mode) round-trips clean.
+
+_REC709_PRIMARIES = {
+    "R": (0.640, 0.330),
+    "G": (0.300, 0.600),
+    "B": (0.150, 0.060),
+    "W": (0.3127, 0.3290),  # D65
+}
+_AP1_PRIMARIES_D65_LEGACY = {
+    "R": (0.713, 0.293),
+    "G": (0.165, 0.830),
+    "B": (0.128, 0.044),
+    "W": (0.3127, 0.3290),  # D65 (legacy / no-CAT mapping)
+}
+
+
+def _rgb_to_xyz_matrix(primaries: dict) -> np.ndarray:
+    """Build a 3x3 RGB -> CIE XYZ matrix from chromaticity coords.
+
+    Standard SMPTE / CIE construction:
+      1. Form M_p with columns (x/y, 1, z/y) for each primary.
+      2. Solve M_p @ S = W_xyz for per-channel scale factors S.
+      3. Multiply M_p columns by S.
+    """
+    xr, yr = primaries["R"]
+    xg, yg = primaries["G"]
+    xb, yb = primaries["B"]
+    xw, yw = primaries["W"]
+
+    def xyz_col(x, y):
+        return np.array([x / y, 1.0, (1.0 - x - y) / y])
+
+    M_p = np.column_stack(
+        [xyz_col(xr, yr), xyz_col(xg, yg), xyz_col(xb, yb)]
+    )
+    W_xyz = xyz_col(xw, yw)
+    S = np.linalg.solve(M_p, W_xyz)
+    return M_p * S  # broadcast across columns
+
+
+_M_REC709_TO_XYZ = _rgb_to_xyz_matrix(_REC709_PRIMARIES)
+_M_AP1_TO_XYZ = _rgb_to_xyz_matrix(_AP1_PRIMARIES_D65_LEGACY)
+_M_REC709_TO_AP1 = np.linalg.inv(_M_AP1_TO_XYZ) @ _M_REC709_TO_XYZ
+_M_AP1_TO_REC709 = np.linalg.inv(_M_REC709_TO_XYZ) @ _M_AP1_TO_XYZ
+
+
+def _apply_primary_matrix(img: np.ndarray, matrix: np.ndarray) -> np.ndarray:
+    """Apply a 3x3 color matrix to an (H, W, 3) or (H, W, 4) image.
+
+    Alpha is left unchanged; only the RGB channels are transformed.
+    """
+    if img.ndim != 3 or img.shape[2] not in (3, 4):
+        raise ValueError(
+            f"_apply_primary_matrix expects (H, W, 3) or (H, W, 4), got {img.shape}"
+        )
+    rgb = img[..., :3].astype(np.float32, copy=False)
+    transformed = rgb @ matrix.T.astype(np.float32)
+    if img.shape[2] == 4:
+        return np.concatenate([transformed, img[..., 3:4]], axis=-1)
+    return transformed
+
 from .utils import NukeNodeBase, ensure_batch_dim, normalize_tensor
 
 # Try to import OpenImageIO
@@ -1067,7 +1142,30 @@ class NukeRead(NukeNodeBase):
                     ["error", "black", "hold", "nearest"],
                     {"default": "black"},
                 ),
-                "colorspace": (["raw", "sRGB", "linear", "ACEScg"], {"default": "raw"}),
+                "colorspace": (
+                    ["raw", "sRGB", "linear", "ACEScg"],
+                    {
+                        "default": "raw",
+                        "tooltip": (
+                            "Colorspace the FILE IS IN on disk "
+                            "(matches Nuke's Read node convention). "
+                            "The node decodes from this into linear "
+                            "Rec.709 working space.\n\n"
+                            "  raw    - no conversion (downstream "
+                            "nodes will handle decoding)\n"
+                            "  sRGB   - file is sRGB-encoded (PNG / "
+                            "JPG); apply IEC 61966-2-1 EOTF to decode "
+                            "-> linear Rec.709\n"
+                            "  linear - file is already linear "
+                            "Rec.709 (EXR); no conversion\n"
+                            "  ACEScg - file is linear ACEScg (AP1 "
+                            "primaries); apply no-CAT AP1 -> Rec.709 "
+                            "primary matrix (matches Nuke nuke-default; "
+                            "strict ACEScg is D60 but legacy mapping "
+                            "treats both as D65 for clean round-trips)"
+                        ),
+                    },
+                ),
                 "show_preview": (
                     "BOOLEAN",
                     {"default": True, "tooltip": "Show thumbnail preview in node"},
@@ -1180,19 +1278,33 @@ class NukeRead(NukeNodeBase):
             elif img.shape[2] == 1:
                 img = np.concatenate([img, img, img], axis=-1)
 
-            # Apply colorspace conversion (basic)
-            if colorspace == "sRGB" and img.max() <= 1.0:
-                # Linear to sRGB
+            # Apply colorspace conversion to bring the file into Nuke-style
+            # linear working space.
+            #
+            # Convention (matches Nuke's Read node): the `colorspace`
+            # parameter describes what colorspace the FILE IS IN on disk,
+            # and the node decodes from that into linear. So a normal sRGB
+            # PNG should be loaded with colorspace="sRGB" — we apply the
+            # IEC 61966-2-1 EOTF to decode the encoded values to linear.
+            #
+            # Math: same piecewise formula nuke-default's srgb.spi1d LUT
+            # is generated from (imageworks/OpenColorIO-Configs).
+            if colorspace == "sRGB":
+                # File is sRGB-encoded; decode to linear.
                 img = np.where(
-                    img <= 0.0031308,
-                    img * 12.92,
-                    1.055 * np.power(np.clip(img, 0.0031308, None), 1 / 2.4) - 0.055,
+                    img <= 0.04045,
+                    img / 12.92,
+                    np.power(np.clip((img + 0.055) / 1.055, 0.0, None), 2.4),
                 )
             elif colorspace == "linear":
-                # sRGB to linear (assume input is sRGB)
-                img = np.where(
-                    img <= 0.04045, img / 12.92, np.power((img + 0.055) / 1.055, 2.4)
-                )
+                # File is already linear Rec.709; no conversion.
+                pass
+            elif colorspace == "ACEScg":
+                # File is linear ACEScg (AP1 primaries). Convert to
+                # linear Rec.709 working space via the no-CAT primary
+                # matrix (matches Nuke's nuke-default convention).
+                img = _apply_primary_matrix(img, _M_AP1_TO_REC709)
+            # colorspace == "raw": pass through with no conversion.
 
             images.append(img)
 
@@ -1293,7 +1405,31 @@ class NukeWrite(NukeNodeBase):
                     },
                 ),
                 "create_directories": ("BOOLEAN", {"default": True}),
-                "colorspace": (["raw", "sRGB", "linear", "ACEScg"], {"default": "raw"}),
+                "colorspace": (
+                    ["raw", "sRGB", "linear", "ACEScg"],
+                    {
+                        "default": "raw",
+                        "tooltip": (
+                            "Colorspace to WRITE the file as on disk "
+                            "(matches Nuke's Write node convention). "
+                            "Input is assumed to be in linear Rec.709 "
+                            "working space; the node encodes from "
+                            "linear Rec.709 to the chosen output "
+                            "space.\n\n"
+                            "  raw    - write input as-is, no conversion\n"
+                            "  sRGB   - encode linear Rec.709 -> sRGB "
+                            "via IEC 61966-2-1 OETF (typical for PNG / "
+                            "JPG)\n"
+                            "  linear - write linear Rec.709, no "
+                            "conversion (typical for EXR)\n"
+                            "  ACEScg - encode Rec.709 -> ACEScg (AP1 "
+                            "primaries) via no-CAT primary matrix "
+                            "(matches Nuke nuke-default; strict "
+                            "ACEScg is D60 but legacy mapping treats "
+                            "both as D65 for clean round-trips)"
+                        ),
+                    },
+                ),
                 "show_preview": (
                     "BOOLEAN",
                     {"default": True, "tooltip": "Show thumbnail preview in node"},
@@ -1398,21 +1534,34 @@ class NukeWrite(NukeNodeBase):
             # Get pixel data
             pixels = img[i].cpu().numpy()
 
-            # Apply colorspace conversion (basic)
+            # Apply colorspace conversion before writing to disk.
+            #
+            # Convention (matches Nuke's Write node): the `colorspace`
+            # parameter describes what colorspace to write the FILE AS
+            # on disk. Input is assumed to be in Nuke-style linear
+            # working space, and we encode from linear to the chosen
+            # output space.
+            #
+            # Math: IEC 61966-2-1 OETF for sRGB. Same formula
+            # nuke-default's srgb.spi1d LUT is generated from.
             if colorspace == "sRGB":
-                # Linear to sRGB
+                # Encode linear -> sRGB for writing.
                 pixels = np.where(
                     pixels <= 0.0031308,
                     pixels * 12.92,
                     1.055 * np.power(np.clip(pixels, 0.0031308, None), 1 / 2.4) - 0.055,
                 )
             elif colorspace == "linear":
-                # sRGB to linear
-                pixels = np.where(
-                    pixels <= 0.04045,
-                    pixels / 12.92,
-                    np.power((pixels + 0.055) / 1.055, 2.4),
-                )
+                # Write linear Rec.709, no conversion.
+                pass
+            elif colorspace == "ACEScg":
+                # Encode linear Rec.709 -> linear ACEScg (AP1 primaries)
+                # via the no-CAT primary matrix, matching Nuke's
+                # nuke-default behavior. Strict ACEScg is D60 but the
+                # legacy / no-CAT mapping treats both as D65 to keep
+                # round-trips bit-exact.
+                pixels = _apply_primary_matrix(pixels, _M_REC709_TO_AP1)
+            # colorspace == "raw": write the input as-is, no conversion.
 
             # Prepare metadata
             # RAW: only tag EXR as linear (convention), skip for other formats
