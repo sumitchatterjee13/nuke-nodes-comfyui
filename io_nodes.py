@@ -1361,7 +1361,6 @@ class NukeWrite(NukeNodeBase):
 
         return {
             "required": {
-                "image": ("IMAGE",),
                 "file_path": (
                     "STRING",
                     {
@@ -1381,6 +1380,13 @@ class NukeWrite(NukeNodeBase):
                 ),
             },
             "optional": {
+                "image": (
+                    "IMAGE",
+                    {
+                        "tooltip": "Image input. Used when channels is 'rgb' or 'rgba'. "
+                                   "Not needed when channels='all_channels'."
+                    },
+                ),
                 "channels": (
                     ["rgba", "rgb", "all_channels"],
                     {
@@ -1467,9 +1473,9 @@ class NukeWrite(NukeNodeBase):
 
     def write_image(
         self,
-        image,
         file_path,
         frame_start=1,
+        image=None,
         channels="rgba",
         passes=None,
         file_type="exr",
@@ -1503,6 +1509,12 @@ class NukeWrite(NukeNodeBase):
                 colorspace=colorspace,
                 show_preview=show_preview,
             )
+
+        # rgb / rgba mode requires an image input
+        if image is None:
+            print(f"[NukeWrite] channels='{channels}' requires the 'image' input "
+                  f"to be connected")
+            return {"ui": {"images": []}, "result": (None, "")}
 
         # Ensure batch dimension
         img = ensure_batch_dim(image)
