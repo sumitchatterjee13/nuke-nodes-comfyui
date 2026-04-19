@@ -385,6 +385,47 @@ class NukeShufflePass(NukeNodeBase):
 # Node registration
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# Helpers used by NukeWrite's "all_channels" multi-pass mode
+# (kept here so the logic lives with the other multi-pass code)
+# ---------------------------------------------------------------------------
+
+# Pass-name substrings that imply a spatial-vector pass (XYZ channel naming)
+_XYZ_HINTS = ("normal", "nml", "n_", "position", "point", "motion",
+              "velocity", "vector", "ncam", "nworld", "nobj",
+              "pworld", "pref", "mv")
+
+# Pass types that should NOT get colorspace conversion applied
+# (they're data, not color)
+_DATA_PASS_NAME_HINTS = _XYZ_HINTS + (
+    "depth", "zdepth", "z_", "_z",
+    "id", "crypto", "cryptomatte", "objectid",
+    "mask", "matte",
+    "uv", "texcoord",
+)
+
+
+def channel_suffix_for_pass(pass_name: str, channel_count: int) -> list:
+    """Build channel suffix list for a pass based on name heuristics."""
+    if channel_count == 1:
+        return ["V"]
+    if channel_count == 2:
+        return ["X", "Y"]
+    lname = pass_name.lower()
+    is_xyz = any(h in lname for h in _XYZ_HINTS)
+    if channel_count == 3:
+        return ["X", "Y", "Z"] if is_xyz else ["R", "G", "B"]
+    if channel_count == 4:
+        return ["X", "Y", "Z", "W"] if is_xyz else ["R", "G", "B", "A"]
+    return [f"ch{i}" for i in range(channel_count)]
+
+
+def is_data_pass(pass_name: str) -> bool:
+    """True if the pass should skip colorspace conversion (data, not color)."""
+    lname = pass_name.lower()
+    return any(h in lname for h in _DATA_PASS_NAME_HINTS)
+
+
 NODE_CLASS_MAPPINGS = {
     "NukeReadMultiPass": NukeReadMultiPass,
     "NukeShufflePass": NukeShufflePass,

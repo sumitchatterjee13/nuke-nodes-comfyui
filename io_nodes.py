@@ -1381,6 +1381,28 @@ class NukeWrite(NukeNodeBase):
                 ),
             },
             "optional": {
+                "channels": (
+                    ["rgba", "rgb", "all_channels"],
+                    {
+                        "default": "rgba",
+                        "tooltip": (
+                            "Channel layout for the output file:\n"
+                            "  rgba - write 4 channels (RGB + alpha). Uses the IMAGE input.\n"
+                            "  rgb - write 3 channels (RGB only). Uses the IMAGE input.\n"
+                            "  all_channels - write all passes as multi-channel EXR. "
+                            "Uses the PASSES input. Colorspace conversion is applied "
+                            "only to light passes, not to data passes (normal, depth, "
+                            "position, motion, IDs, mattes, UVs)."
+                        ),
+                    },
+                ),
+                "passes": (
+                    "NUKE_PASSES",
+                    {
+                        "tooltip": "Multi-pass bundle from Nuke Read MultiPass. "
+                                   "Used when channels='all_channels'."
+                    },
+                ),
                 "file_type": (
                     ["exr", "tiff", "png", "jpg", "dpx", "hdr", "tga", "bmp", "webp"],
                     {"default": "exr"},
@@ -1448,6 +1470,8 @@ class NukeWrite(NukeNodeBase):
         image,
         file_path,
         frame_start=1,
+        channels="rgba",
+        passes=None,
         file_type="exr",
         bit_depth="16f",
         compression="dwaa",
@@ -1457,14 +1481,43 @@ class NukeWrite(NukeNodeBase):
         colorspace="raw",
         show_preview=True,
     ):
-        """Write image(s) to disk."""
+        """Write image(s) to disk. Supports rgb / rgba / multi-pass EXR."""
 
         if not file_path:
             print("[NukeWrite] No file path specified")
             return {"ui": {"images": []}, "result": (image, "")}
 
+        # Branch to multi-pass writer if requested
+        if channels == "all_channels":
+            return self._write_multipass(
+                passes=passes,
+                image=image,
+                file_path=file_path,
+                frame_start=frame_start,
+                file_type=file_type,
+                bit_depth=bit_depth,
+                compression=compression,
+                frame_padding=frame_padding,
+                auto_sequence=auto_sequence,
+                create_directories=create_directories,
+                colorspace=colorspace,
+                show_preview=show_preview,
+            )
+
         # Ensure batch dimension
         img = ensure_batch_dim(image)
+
+        # Clamp to rgb / rgba per user selection
+        if channels == "rgb" and img.shape[-1] > 3:
+            img = img[..., :3]
+        elif channels == "rgba":
+            if img.shape[-1] == 3:
+                # Pad with opaque alpha
+                alpha = torch.ones_like(img[..., :1])
+                img = torch.cat([img, alpha], dim=-1)
+            elif img.shape[-1] > 4:
+                img = img[..., :4]
+
         batch_size = img.shape[0]
 
         # Get ComfyUI output directory
@@ -1592,6 +1645,189 @@ class NukeWrite(NukeNodeBase):
             ui_images = create_preview_images(image)
 
         return {"ui": {"images": ui_images}, "result": (image, paths_str)}
+
+    def _write_multipass(
+        self,
+        passes,
+        image,
+        file_path,
+        frame_start,
+        file_type,
+        bit_depth,
+        compression,
+        frame_padding,
+        auto_sequence,
+        create_directories,
+        colorspace,
+        show_preview,
+    ):
+        """Write a multi-pass NUKE_PASSES bundle as a single multi-channel EXR.
+
+        Colorspace conversion is applied only to light/beauty passes, not to
+        data passes (normals, depth, position, motion, IDs, mattes, UVs) —
+        those are scene-referred data and must not be gamma-transformed.
+        """
+        if not OIIO_AVAILABLE:
+            raise RuntimeError(
+                "OpenImageIO is required for multi-pass EXR write. "
+                "Install with: pip install OpenImageIO"
+            )
+        if not passes:
+            print("[NukeWrite] channels='all_channels' but no passes bundle "
+                  "was connected")
+            return {"ui": {"images": []}, "result": (image, "")}
+
+        # Force .exr (multi-channel beyond RGBA is only meaningful for EXR)
+        if file_type != "exr":
+            print(f"[NukeWrite] Forcing .exr for multi-pass "
+                  f"(ignoring file_type={file_type})")
+            file_type = "exr"
+
+        # Import multi-pass helpers lazily to avoid circular imports at module load
+        from .multipass_nodes import channel_suffix_for_pass, is_data_pass
+
+        # Resolve output directory base like the single-image path does
+        output_base = folder_paths.get_output_directory()
+        file_path = os.path.expandvars(os.path.expanduser(file_path))
+        if not os.path.isabs(file_path):
+            file_path = os.path.join(output_base, file_path)
+
+        pattern, frame_spec, padding = parse_frame_pattern(file_path)
+        is_sequence = frame_spec is not None and padding > 0
+        if not is_sequence:
+            padding = frame_padding
+
+        base, ext = os.path.splitext(file_path)
+        if ext.lower() != f".{file_type}":
+            file_path = f"{base}.{file_type}"
+            pattern, frame_spec, p2 = parse_frame_pattern(file_path)
+            if frame_spec is not None and p2 > 0:
+                is_sequence = True
+                padding = p2
+            else:
+                pattern = file_path
+
+        # Multi-pass is a single frame at a time (bundle has no batch dim)
+        if is_sequence:
+            output_path = expand_frame_pattern(pattern, frame_start, padding)
+        else:
+            b, e = os.path.splitext(file_path)
+            frame_str = str(frame_start).zfill(padding)
+            output_path = f"{b}_{frame_str}{e}"
+
+        if auto_sequence:
+            output_path = get_unique_filepath(output_path)
+
+        if create_directories:
+            os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
+
+        # --- Build the combined channel array ---
+        first = next(iter(passes.values()))
+        H, W = first.shape[:2]
+
+        channel_names = []
+        channel_arrays = []
+
+        for pass_name, tensor in passes.items():
+            arr = tensor.detach().cpu().numpy().astype(np.float32)
+            if arr.ndim == 2:
+                arr = arr[..., np.newaxis]
+            pH, pW, C = arr.shape
+
+            # Resolution mismatch safeguard (shouldn't normally happen)
+            if (pH, pW) != (H, W):
+                import cv2
+                arr = cv2.resize(arr, (W, H), interpolation=cv2.INTER_LINEAR)
+                if arr.ndim == 2:
+                    arr = arr[..., np.newaxis]
+
+            # Apply colorspace conversion ONLY to color passes, not data passes.
+            # Alpha channels within a color pass are also passed through unchanged.
+            if colorspace != "raw" and not is_data_pass(pass_name):
+                # Separate color (first 3) from alpha (rest) if applicable
+                if C == 4:
+                    color = arr[..., :3]
+                    alpha = arr[..., 3:]
+                    color = _apply_write_colorspace(color, colorspace)
+                    arr = np.concatenate([color, alpha], axis=-1)
+                elif C == 3:
+                    arr = _apply_write_colorspace(arr, colorspace)
+                elif C == 1:
+                    # Single-channel color (rare) — apply as-is
+                    arr = _apply_write_colorspace(arr, colorspace)
+
+            # Naming: top-level RGBA, otherwise passname.<suffix>
+            suffixes = channel_suffix_for_pass(pass_name, C)
+            if pass_name.upper() == "RGBA":
+                names = suffixes[:C]
+            else:
+                names = [f"{pass_name}.{s}" for s in suffixes[:C]]
+
+            channel_names.extend(names)
+            channel_arrays.append(arr)
+
+        combined = np.ascontiguousarray(np.concatenate(channel_arrays, axis=-1))
+        total_ch = combined.shape[-1]
+
+        # Bit depth
+        if bit_depth == "32f":
+            out_arr = combined.astype(np.float32)
+            fmt = oiio.FLOAT
+        elif bit_depth == "16f":
+            out_arr = combined.astype(np.float16)
+            fmt = oiio.HALF
+        else:
+            # 8 / 16 integer make little sense for multi-pass EXR — use 16f
+            print(f"[NukeWrite] bit_depth={bit_depth} not suited for multi-pass, "
+                  f"using 16f")
+            out_arr = combined.astype(np.float16)
+            fmt = oiio.HALF
+
+        spec = oiio.ImageSpec(W, H, total_ch, fmt)
+        spec.channelnames = tuple(channel_names)
+        spec.attribute("compression", compression)
+        spec.attribute("Software", "ComfyUI Nuke Nodes")
+        if colorspace != "raw":
+            spec.attribute("oiio:ColorSpace", colorspace)
+        else:
+            spec.attribute("oiio:ColorSpace", "linear")
+
+        out = oiio.ImageOutput.create(output_path)
+        if out is None:
+            raise RuntimeError(f"OIIO cannot create: {output_path} "
+                               f"({oiio.geterror()})")
+        if not out.open(output_path, spec):
+            raise RuntimeError(f"OIIO open failed: {out.geterror()}")
+        if not out.write_image(np.ascontiguousarray(out_arr)):
+            err = out.geterror()
+            out.close()
+            raise RuntimeError(f"OIIO write failed: {err}")
+        out.close()
+
+        print(f"[NukeWrite] Multi-pass EXR written: {output_path}")
+        print(f"[NukeWrite]   {W}x{H}, {total_ch} channels, {bit_depth}, "
+              f"compression={compression}")
+        print(f"[NukeWrite]   Channels: {', '.join(channel_names)}")
+
+        ui_images = []
+        if show_preview and image is not None and image.shape[0] > 0:
+            ui_images = create_preview_images(image)
+
+        return {"ui": {"images": ui_images}, "result": (image, output_path)}
+
+
+def _apply_write_colorspace(arr: np.ndarray, colorspace: str) -> np.ndarray:
+    """Apply the same write-time colorspace encoding used in write_image,
+    but to an arbitrary [H, W, 3] array (no batch dim)."""
+    if colorspace == "sRGB":
+        return np.where(
+            arr <= 0.0031308,
+            arr * 12.92,
+            1.055 * np.power(np.clip(arr, 0.0031308, None), 1 / 2.4) - 0.055,
+        )
+    if colorspace == "ACEScg":
+        return _apply_primary_matrix(arr, _M_REC709_TO_AP1)
+    return arr  # raw / linear
 
 
 class NukeReadInfo(NukeNodeBase):
