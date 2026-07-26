@@ -10,6 +10,7 @@ Provides:
     bundle and returns it as a standard ComfyUI IMAGE.
 """
 
+import logging
 import os
 from collections import OrderedDict
 from typing import Dict, List, Tuple
@@ -19,10 +20,14 @@ import torch
 
 from .io_nodes import (
     OIIO_AVAILABLE,
+    auto_detect_sequence,
     expand_frame_pattern,
+    file_change_token,
     parse_frame_pattern,
 )
 from .utils import NukeNodeBase
+
+logger = logging.getLogger(__name__)
 
 try:
     import OpenImageIO as oiio
@@ -246,19 +251,62 @@ class NukeReadMultiPass(NukeNodeBase):
     CATEGORY = "Nuke/IO"
 
     @classmethod
-    def IS_CHANGED(cls, **kwargs):
-        return float("nan")
+    def IS_CHANGED(cls, file_path="", frame=1, load_as_sequence=True, **kwargs):
+        """
+        Fingerprint the file that read_multipass WOULD load so ComfyUI only
+        re-runs the node when the file on disk actually changes.
+
+        Mirrors read_multipass's path/frame resolution, then builds a
+        (path, mtime_ns, size) token via os.stat — file contents are never
+        read. A missing file yields a deterministic "missing:<path>" token,
+        so the node re-runs when it appears.
+        """
+        if not file_path:
+            # Deterministic: output is a constant empty bundle / black image.
+            return ""
+
+        file_path = os.path.expandvars(os.path.expanduser(file_path))
+
+        pattern, frame_spec, padding = parse_frame_pattern(file_path)
+
+        # Mirror read_multipass's sequence auto-detection (stat-only)
+        if load_as_sequence and frame_spec is None:
+            detected = auto_detect_sequence(file_path)
+            if detected is not None:
+                pattern, _detected_frames, padding = detected
+                frame_spec = "auto"
+
+        is_sequence = load_as_sequence and frame_spec is not None and padding > 0
+
+        if is_sequence:
+            actual_path = expand_frame_pattern(pattern, frame, padding)
+        else:
+            actual_path = file_path
+
+        return file_change_token(actual_path)
 
     def read_multipass(self, file_path, frame,
                        load_as_sequence=True, print_pass_list=True):
         if not file_path:
-            print("[NukeReadMultiPass] No file path specified")
+            logger.warning("[NukeReadMultiPass] No file path specified")
             empty = torch.zeros((1, 512, 512, 3))
             return ({}, empty, "No file loaded")
 
         file_path = os.path.expandvars(os.path.expanduser(file_path))
 
         pattern, frame_spec, padding = parse_frame_pattern(file_path)
+
+        # No explicit frame token: try auto-detecting an on-disk sequence
+        if load_as_sequence and frame_spec is None:
+            detected = auto_detect_sequence(file_path)
+            if detected is not None:
+                pattern, detected_frames, padding = detected
+                frame_spec = "auto"
+                logger.info(
+                    f"[NukeReadMultiPass] Auto-detected sequence: {pattern} "
+                    f"({len(detected_frames)} frames)"
+                )
+
         is_sequence = load_as_sequence and frame_spec is not None and padding > 0
 
         if is_sequence:
@@ -267,16 +315,16 @@ class NukeReadMultiPass(NukeNodeBase):
             actual_path = file_path
 
         if not os.path.exists(actual_path):
-            print(f"[NukeReadMultiPass] File not found: {actual_path}")
+            logger.warning(f"[NukeReadMultiPass] File not found: {actual_path}")
             empty = torch.zeros((1, 512, 512, 3))
             return ({}, empty, f"File not found: {actual_path}")
 
-        print(f"[NukeReadMultiPass] Loading: {actual_path}")
+        logger.info(f"[NukeReadMultiPass] Loading: {actual_path}")
 
         try:
             passes_np, channel_names = read_all_passes(actual_path)
         except Exception as e:
-            print(f"[NukeReadMultiPass] Error: {e}")
+            logger.error(f"[NukeReadMultiPass] Error: {e}")
             empty = torch.zeros((1, 512, 512, 3))
             return ({}, empty, f"Load error: {e}")
 
@@ -285,9 +333,9 @@ class NukeReadMultiPass(NukeNodeBase):
         # Build human-readable pass list
         pass_list_str = _format_pass_list(passes, channel_names)
         if print_pass_list:
-            print(f"[NukeReadMultiPass] ===== Passes in {os.path.basename(actual_path)} =====")
-            print(pass_list_str)
-            print(f"[NukeReadMultiPass] =============================================")
+            logger.info(f"[NukeReadMultiPass] ===== Passes in {os.path.basename(actual_path)} =====")
+            logger.info(pass_list_str)
+            logger.info(f"[NukeReadMultiPass] =============================================")
 
         # Pick a default "beauty" preview: prefer RGBA, else first pass
         if "RGBA" in passes:
@@ -353,7 +401,7 @@ class NukeShufflePass(NukeNodeBase):
                 channel_mode="auto", on_missing="black"):
         if not passes:
             msg = "Empty passes bundle"
-            print(f"[NukeShufflePass] {msg}")
+            logger.warning(f"[NukeShufflePass] {msg}")
             return (torch.zeros((1, 512, 512, 3)), msg)
 
         name = pass_name.strip()
@@ -361,7 +409,7 @@ class NukeShufflePass(NukeNodeBase):
         if name not in passes:
             available = ", ".join(passes.keys())
             msg = f"Pass '{name}' not found. Available: {available}"
-            print(f"[NukeShufflePass] {msg}")
+            logger.warning(f"[NukeShufflePass] {msg}")
             if on_missing == "error":
                 raise ValueError(msg)
             # Fallback to black using dimensions of first pass
@@ -376,7 +424,7 @@ class NukeShufflePass(NukeNodeBase):
         H, W = arr.shape[:2]
         info = (f"Pass '{name}': {C}ch, {W}x{H}, "
                 f"range [{arr.min():.3f}, {arr.max():.3f}]")
-        print(f"[NukeShufflePass] {info}")
+        logger.info(f"[NukeShufflePass] {info}")
 
         return (img, info)
 

@@ -3,10 +3,8 @@ Nuke Nodes for ComfyUI
 A collection of custom nodes that replicate Nuke compositing functionality
 """
 
-import os
-
 # Web directory for JavaScript extensions (preview widgets, etc.)
-WEB_DIRECTORY = os.path.join(os.path.dirname(os.path.realpath(__file__)), "web")
+WEB_DIRECTORY = "./web"
 
 from .blur_nodes import *
 from .colorspace_nodes import *
@@ -14,6 +12,8 @@ from .grade_nodes import *
 from .io_nodes import *
 from .merge_nodes import *
 from .multipass_nodes import *
+from .reformat_nodes import *
+from .time_nodes import *
 from .transform_nodes import *
 from .vectorfield_nodes import *
 
@@ -48,6 +48,10 @@ from .merge_nodes import NODE_CLASS_MAPPINGS as merge_mappings
 from .merge_nodes import NODE_DISPLAY_NAME_MAPPINGS as merge_display_mappings
 from .multipass_nodes import NODE_CLASS_MAPPINGS as multipass_mappings
 from .multipass_nodes import NODE_DISPLAY_NAME_MAPPINGS as multipass_display_mappings
+from .reformat_nodes import NODE_CLASS_MAPPINGS as reformat_mappings
+from .reformat_nodes import NODE_DISPLAY_NAME_MAPPINGS as reformat_display_mappings
+from .time_nodes import NODE_CLASS_MAPPINGS as time_mappings
+from .time_nodes import NODE_DISPLAY_NAME_MAPPINGS as time_display_mappings
 from .transform_nodes import NODE_CLASS_MAPPINGS as transform_mappings
 from .transform_nodes import NODE_DISPLAY_NAME_MAPPINGS as transform_display_mappings
 from .vectorfield_nodes import NODE_CLASS_MAPPINGS as vectorfield_mappings
@@ -64,6 +68,8 @@ NODE_CLASS_MAPPINGS.update(grade_mappings)
 NODE_CLASS_MAPPINGS.update(io_mappings)
 NODE_CLASS_MAPPINGS.update(merge_mappings)
 NODE_CLASS_MAPPINGS.update(multipass_mappings)
+NODE_CLASS_MAPPINGS.update(reformat_mappings)
+NODE_CLASS_MAPPINGS.update(time_mappings)
 NODE_CLASS_MAPPINGS.update(transform_mappings)
 NODE_CLASS_MAPPINGS.update(vectorfield_mappings)
 NODE_CLASS_MAPPINGS.update(viewer_mappings)
@@ -74,6 +80,8 @@ NODE_DISPLAY_NAME_MAPPINGS.update(grade_display_mappings)
 NODE_DISPLAY_NAME_MAPPINGS.update(io_display_mappings)
 NODE_DISPLAY_NAME_MAPPINGS.update(merge_display_mappings)
 NODE_DISPLAY_NAME_MAPPINGS.update(multipass_display_mappings)
+NODE_DISPLAY_NAME_MAPPINGS.update(reformat_display_mappings)
+NODE_DISPLAY_NAME_MAPPINGS.update(time_display_mappings)
 NODE_DISPLAY_NAME_MAPPINGS.update(transform_display_mappings)
 NODE_DISPLAY_NAME_MAPPINGS.update(vectorfield_display_mappings)
 NODE_DISPLAY_NAME_MAPPINGS.update(viewer_display_mappings)

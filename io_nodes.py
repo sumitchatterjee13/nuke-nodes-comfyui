@@ -25,6 +25,7 @@ Sequence patterns supported:
 """
 
 import glob
+import logging
 import os
 import re
 from pathlib import Path
@@ -33,6 +34,8 @@ from typing import Dict, List, Optional, Tuple, Union
 import folder_paths
 import numpy as np
 import torch
+
+logger = logging.getLogger(__name__)
 
 
 # ============================================================================
@@ -243,29 +246,29 @@ def detect_sequence(filepath: str) -> Tuple[str, List[int], int]:
     glob_pattern = re.sub(r"%\d*d", "*", pattern)
     glob_pattern = re.sub(r"#+", "*", glob_pattern)
 
-    print(f"[NukeRead] Searching for sequence with pattern: {glob_pattern}")
+    logger.info(f"[NukeRead] Searching for sequence with pattern: {glob_pattern}")
 
     matching_files = glob.glob(glob_pattern)
 
     if not matching_files:
-        print(f"[NukeRead] No files found matching pattern: {glob_pattern}")
+        logger.warning(f"[NukeRead] No files found matching pattern: {glob_pattern}")
         # Check if directory exists
         directory = os.path.dirname(glob_pattern)
         if os.path.exists(directory):
-            print(f"[NukeRead] Directory exists: {directory}")
+            logger.info(f"[NukeRead] Directory exists: {directory}")
             # List files in directory for debugging
             try:
                 files = os.listdir(directory)
-                print(
+                logger.info(
                     f"[NukeRead] Files in directory: {files[:10]}..."
                 )  # Show first 10
             except Exception as e:
-                print(f"[NukeRead] Error listing directory: {e}")
+                logger.error(f"[NukeRead] Error listing directory: {e}")
         else:
-            print(f"[NukeRead] Directory does not exist: {directory}")
+            logger.warning(f"[NukeRead] Directory does not exist: {directory}")
         return pattern, [], padding
 
-    print(f"[NukeRead] Found {len(matching_files)} files in sequence")
+    logger.info(f"[NukeRead] Found {len(matching_files)} files in sequence")
 
     # Extract frame numbers
     frames = []
@@ -276,6 +279,66 @@ def detect_sequence(filepath: str) -> Tuple[str, List[int], int]:
             frames.append(int(match.group(1)))
 
     frames.sort()
+    return pattern, frames, padding
+
+
+def auto_detect_sequence(filepath: str) -> Optional[Tuple[str, List[int], int]]:
+    """
+    Auto-detect an on-disk image sequence from a bare file path that has no
+    frame token (no ####, %0Nd, or literal trailing frame number).
+
+    Given e.g. "renders/beauty.exr", scans the directory for files whose
+    basenames match "beauty<sep><digits>.exr" where <sep> is ".", "_" or
+    empty ("beauty.0001.exr", "beauty_0001.exr", "beauty0001.exr").
+    Matches are grouped by (separator, padding); the group with the most
+    files wins (ties prefer the "." separator, then larger padding).
+    Extension matching is case-insensitive on Windows.
+
+    Stat-only (a single os.listdir, no file contents are read), so it is
+    safe to call from IS_CHANGED on every queue.
+
+    Returns:
+        (pattern, frames, padding) where pattern contains a %0Nd token and
+        frames is the sorted list of detected frame numbers, or None when
+        no matching files are found.
+    """
+    filepath = filepath.replace("\\", "/")
+    directory = os.path.dirname(filepath)
+    basename = os.path.basename(filepath)
+    stem, ext = os.path.splitext(basename)
+    if not stem:
+        return None
+
+    try:
+        entries = os.listdir(directory or ".")
+    except OSError:
+        return None
+
+    ext_rx = f"(?i:{re.escape(ext)})" if _is_windows() else re.escape(ext)
+    name_rx = re.compile("^" + re.escape(stem) + r"([._]?)(\d+)" + ext_rx + "$")
+
+    # Group matching frame numbers by (separator, padding)
+    groups: Dict[Tuple[str, int], List[int]] = {}
+    for entry in entries:
+        match = name_rx.match(entry)
+        if not match:
+            continue
+        sep, digits = match.group(1), match.group(2)
+        groups.setdefault((sep, len(digits)), []).append(int(digits))
+
+    if not groups:
+        return None
+
+    # Most files wins; ties prefer "." separator, then larger padding
+    sep_rank = {".": 2, "_": 1, "": 0}
+    (sep, padding), frame_list = max(
+        groups.items(),
+        key=lambda item: (len(item[1]), sep_rank.get(item[0][0], 0), item[0][1]),
+    )
+    frames = sorted(set(frame_list))
+
+    prefix = f"{directory}/" if directory else ""
+    pattern = f"{prefix}{stem}{sep}%0{padding}d{ext}"
     return pattern, frames, padding
 
 
@@ -311,6 +374,25 @@ def parse_frame_range(range_str: str) -> List[int]:
             frames.append(int(part))
 
     return sorted(set(frames))
+
+
+def file_change_token(filepath: str) -> str:
+    """
+    Build a stable change-detection token for a single file path.
+
+    Uses only os.stat (never reads file contents), so it is cheap enough to
+    run from IS_CHANGED on every queue.
+
+    Returns:
+        "<path>|<mtime_ns>|<size>" when the file exists, otherwise a
+        deterministic "missing:<path>" token so the fingerprint changes
+        (and the node re-runs) when the file appears later.
+    """
+    try:
+        st = os.stat(filepath)
+        return f"{filepath}|{st.st_mtime_ns}|{st.st_size}"
+    except OSError:
+        return f"missing:{filepath}"
 
 
 # ============================================================================
@@ -465,6 +547,70 @@ def get_unique_filepath(filepath: str) -> str:
     return os.path.join(directory, f"{base}_{timestamp}{ext}")
 
 
+def _versioned_sequence_pattern(pattern: str, version: int) -> str:
+    """
+    Insert a _<version> base-name suffix into a %0Nd sequence pattern.
+
+    "render.%04d.exr" -> "render_1.%04d.exr"
+    "render_%04d.exr" -> "render_1_%04d.exr"
+
+    The suffix goes on the base name, before the separator that precedes the
+    frame token, so every frame of a versioned sequence shares one
+    consistent base name.
+    """
+    match = re.search(r"%\d*d", pattern)
+    if match is None:
+        base, ext = os.path.splitext(pattern)
+        return f"{base}_{version}{ext}"
+    insert_at = match.start()
+    if insert_at > 0 and pattern[insert_at - 1] in "._-":
+        insert_at -= 1
+    return f"{pattern[:insert_at]}_{version}{pattern[insert_at:]}"
+
+
+def _warn_stale_frames(
+    sequence_pattern: str, first_frame: int, last_frame: int
+) -> None:
+    """
+    Warn (never delete) about on-disk frames matching a %0Nd sequence
+    pattern whose frame number lies beyond the just-written range — stale
+    leftovers from a longer previous render.
+    """
+    sequence_pattern = sequence_pattern.replace("\\", "/")
+    directory = os.path.dirname(sequence_pattern) or "."
+    basename = os.path.basename(sequence_pattern)
+    match = re.search(r"%\d*d", basename)
+    if match is None:
+        return
+
+    flags = re.IGNORECASE if _is_windows() else 0
+    frame_rx = re.compile(
+        "^"
+        + re.escape(basename[: match.start()])
+        + r"(\d+)"
+        + re.escape(basename[match.end():])
+        + "$",
+        flags,
+    )
+
+    try:
+        entries = os.listdir(directory)
+    except OSError:
+        return
+
+    stale = sorted(
+        int(m.group(1))
+        for f in entries
+        if (m := frame_rx.match(f)) and int(m.group(1)) > last_frame
+    )
+    if stale:
+        logger.warning(
+            f"[NukeWrite] {len(stale)} stale frame(s) beyond written range "
+            f"{first_frame}-{last_frame} left in {directory} "
+            f"(e.g. frame {stale[0]}); not deleted"
+        )
+
+
 # ============================================================================
 # Image I/O Functions
 # ============================================================================
@@ -478,7 +624,7 @@ def read_image_oiio(filepath: str) -> Optional[np.ndarray]:
     try:
         inp = oiio.ImageInput.open(filepath)
         if inp is None:
-            print(f"[NukeRead] OIIO error: {oiio.geterror()}")
+            logger.warning(f"[NukeRead] OIIO error: {oiio.geterror()}")
             return None
 
         spec = inp.spec()
@@ -494,7 +640,7 @@ def read_image_oiio(filepath: str) -> Optional[np.ndarray]:
 
         return pixels
     except Exception as e:
-        print(f"[NukeRead] OIIO error reading {filepath}: {e}")
+        logger.warning(f"[NukeRead] OIIO error reading {filepath}: {e}")
         return None
 
 
@@ -526,7 +672,7 @@ def read_image_cv2(filepath: str) -> Optional[np.ndarray]:
 
         return img
     except Exception as e:
-        print(f"[NukeRead] OpenCV error reading {filepath}: {e}")
+        logger.warning(f"[NukeRead] OpenCV error reading {filepath}: {e}")
         return None
 
 
@@ -552,7 +698,7 @@ def read_image_pil(filepath: str) -> Optional[np.ndarray]:
 
         return img
     except Exception as e:
-        print(f"[NukeRead] PIL error reading {filepath}: {e}")
+        logger.warning(f"[NukeRead] PIL error reading {filepath}: {e}")
         return None
 
 
@@ -563,7 +709,7 @@ def read_image(filepath: str) -> Optional[np.ndarray]:
     Priority: OpenImageIO > OpenCV > PIL
     """
     if not os.path.exists(filepath):
-        print(f"[NukeRead] File not found: {filepath}")
+        logger.warning(f"[NukeRead] File not found: {filepath}")
         return None
 
     # Try OIIO first (best format support)
@@ -584,7 +730,7 @@ def read_image(filepath: str) -> Optional[np.ndarray]:
         if img is not None:
             return img
 
-    print(f"[NukeRead] No library available to read: {filepath}")
+    logger.error(f"[NukeRead] No library available to read: {filepath}")
     return None
 
 
@@ -655,18 +801,18 @@ def write_image_oiio(
         # Create output
         out = oiio.ImageOutput.create(filepath)
         if out is None:
-            print(f"[NukeWrite] OIIO error: {oiio.geterror()}")
+            logger.warning(f"[NukeWrite] OIIO error: {oiio.geterror()}")
             return False
 
         # Ensure directory exists
         os.makedirs(os.path.dirname(filepath) or ".", exist_ok=True)
 
         if not out.open(filepath, spec):
-            print(f"[NukeWrite] OIIO error opening: {out.geterror()}")
+            logger.warning(f"[NukeWrite] OIIO error opening: {out.geterror()}")
             return False
 
         if not out.write_image(pixels_out):
-            print(f"[NukeWrite] OIIO error writing: {out.geterror()}")
+            logger.warning(f"[NukeWrite] OIIO error writing: {out.geterror()}")
             out.close()
             return False
 
@@ -674,7 +820,7 @@ def write_image_oiio(
         return True
 
     except Exception as e:
-        print(f"[NukeWrite] OIIO error writing {filepath}: {e}")
+        logger.warning(f"[NukeWrite] OIIO error writing {filepath}: {e}")
         return False
 
 
@@ -705,7 +851,7 @@ def write_image_cv2(filepath: str, pixels: np.ndarray, bit_depth: str = "16") ->
         return cv2.imwrite(filepath, pixels_out)
 
     except Exception as e:
-        print(f"[NukeWrite] OpenCV error writing {filepath}: {e}")
+        logger.warning(f"[NukeWrite] OpenCV error writing {filepath}: {e}")
         return False
 
 
@@ -730,7 +876,7 @@ def write_image_pil(filepath: str, pixels: np.ndarray, bit_depth: str = "8") -> 
         return True
 
     except Exception as e:
-        print(f"[NukeWrite] PIL error writing {filepath}: {e}")
+        logger.warning(f"[NukeWrite] PIL error writing {filepath}: {e}")
         return False
 
 
@@ -761,7 +907,7 @@ def write_image(
         if write_image_pil(filepath, pixels, bit_depth):
             return True
 
-    print(f"[NukeWrite] No library available to write: {filepath}")
+    logger.error(f"[NukeWrite] No library available to write: {filepath}")
     return False
 
 
@@ -1176,11 +1322,100 @@ class NukeRead(NukeNodeBase):
     RETURN_TYPES = ("IMAGE",)
     FUNCTION = "read_image"
     CATEGORY = "Nuke/IO"
-    OUTPUT_NODE = True
 
     @classmethod
-    def IS_CHANGED(cls, **kwargs):
-        return float("nan")
+    def IS_CHANGED(
+        cls,
+        file_path="",
+        frame=1,
+        load_as_sequence=True,
+        first_frame=1,
+        last_frame=1,
+        frame_mode="single",
+        missing_frames="black",
+        **kwargs,
+    ):
+        """
+        Fingerprint the file(s) that read_image WOULD load so ComfyUI only
+        re-runs the node when something on disk actually changes.
+
+        Mirrors read_image's path/frame resolution, then stats each resolved
+        file into a (path, mtime_ns, size) token. Missing files contribute a
+        deterministic "missing:<path>" token, so the node re-runs when they
+        appear. Only stat()/glob are used — file contents are never read.
+        """
+        if not file_path:
+            # Deterministic: output is a constant black image.
+            return ""
+
+        # Mirror read_image's path resolution
+        file_path = os.path.expandvars(os.path.expanduser(file_path))
+        pattern, frame_spec, padding = parse_frame_pattern(file_path)
+
+        # Mirror read_image's sequence auto-detection (stat-only)
+        auto_frames = None
+        if load_as_sequence and frame_spec is None:
+            detected = auto_detect_sequence(file_path)
+            if detected is not None:
+                pattern, auto_frames, padding = detected
+                frame_spec = "auto"
+
+        is_sequence = load_as_sequence and (frame_spec is not None and padding > 0)
+
+        tokens = []
+        available_frames = []
+
+        # Mirror read_image's frame resolution
+        if frame_mode == "single":
+            frames_to_load = [frame]
+        elif frame_mode == "range":
+            frames_to_load = list(range(first_frame, last_frame + 1))
+        elif frame_mode == "all" and is_sequence:
+            if auto_frames is not None:
+                available_frames = auto_frames
+            else:
+                _, available_frames, _ = detect_sequence(file_path)
+            frames_to_load = available_frames if available_frames else [frame]
+            # Added/removed frames must invalidate the cache
+            tokens.append(
+                "frames:" + ",".join(str(f) for f in available_frames)
+            )
+        else:
+            frames_to_load = [frame]
+
+        # Nearest mode can substitute another frame's file for a missing one
+        if (
+            is_sequence
+            and missing_frames == "nearest"
+            and not available_frames
+        ):
+            if auto_frames is not None:
+                available_frames = auto_frames
+            else:
+                _, available_frames, _ = detect_sequence(file_path)
+
+        for f in frames_to_load:
+            if is_sequence:
+                actual_path = expand_frame_pattern(pattern, f, padding)
+            else:
+                actual_path = file_path
+
+            token = file_change_token(actual_path)
+            tokens.append(token)
+
+            # If this frame is missing and nearest mode would substitute
+            # another frame's file, fingerprint that file too.
+            if (
+                token.startswith("missing:")
+                and is_sequence
+                and missing_frames == "nearest"
+                and available_frames
+            ):
+                nearest = min(available_frames, key=lambda x: abs(x - f))
+                nearest_path = expand_frame_pattern(pattern, nearest, padding)
+                tokens.append(file_change_token(nearest_path))
+
+        return ";".join(tokens)
 
     def read_image(
         self,
@@ -1197,7 +1432,7 @@ class NukeRead(NukeNodeBase):
         """Read image(s) from disk."""
 
         if not file_path:
-            print("[NukeRead] No file path specified")
+            logger.warning("[NukeRead] No file path specified")
             # Return black image
             result = torch.zeros((1, 512, 512, 3))
             return {"ui": {"images": []}, "result": (result,)}
@@ -1205,17 +1440,30 @@ class NukeRead(NukeNodeBase):
         # Expand environment variables and user home
         file_path = os.path.expandvars(os.path.expanduser(file_path))
 
-        print(f"[NukeRead] Loading path: {file_path}")
-        print(f"[NukeRead] Load as sequence: {load_as_sequence}")
+        logger.info(f"[NukeRead] Loading path: {file_path}")
+        logger.info(f"[NukeRead] Load as sequence: {load_as_sequence}")
 
         # Parse frame pattern
         pattern, frame_spec, padding = parse_frame_pattern(file_path)
+
+        # No explicit frame token: try auto-detecting an on-disk sequence
+        auto_frames = None
+        if load_as_sequence and frame_spec is None:
+            detected = auto_detect_sequence(file_path)
+            if detected is not None:
+                pattern, auto_frames, padding = detected
+                frame_spec = "auto"
+                logger.info(
+                    f"[NukeRead] Auto-detected sequence: {pattern} "
+                    f"({len(auto_frames)} frames)"
+                )
+
         is_sequence = load_as_sequence and (frame_spec is not None and padding > 0)
 
         if frame_spec and padding > 0:
-            print(f"[NukeRead] Detected pattern: {pattern}, padding: {padding}")
+            logger.info(f"[NukeRead] Detected pattern: {pattern}, padding: {padding}")
         else:
-            print(f"[NukeRead] No sequence pattern detected, treating as single file")
+            logger.info(f"[NukeRead] No sequence pattern detected, treating as single file")
 
         # Determine frames to load
         if frame_mode == "single":
@@ -1223,14 +1471,20 @@ class NukeRead(NukeNodeBase):
         elif frame_mode == "range":
             frames_to_load = list(range(first_frame, last_frame + 1))
         elif frame_mode == "all" and is_sequence:
-            _, available_frames, _ = detect_sequence(file_path)
+            if auto_frames is not None:
+                available_frames = auto_frames
+            else:
+                _, available_frames, _ = detect_sequence(file_path)
             frames_to_load = available_frames if available_frames else [frame]
         else:
             frames_to_load = [frame]
 
         # Get available frames for nearest/hold modes
         if is_sequence and missing_frames in ["hold", "nearest"]:
-            _, available_frames, _ = detect_sequence(file_path)
+            if auto_frames is not None:
+                available_frames = auto_frames
+            else:
+                _, available_frames, _ = detect_sequence(file_path)
         else:
             available_frames = []
 
@@ -1251,7 +1505,7 @@ class NukeRead(NukeNodeBase):
             else:
                 # Handle missing frames
                 if missing_frames == "error":
-                    print(f"[NukeRead] Frame not found: {actual_path}")
+                    logger.error(f"[NukeRead] Frame not found: {actual_path}")
                 elif missing_frames == "hold" and images:
                     # Use previous frame
                     img = images[-1].copy() if images else None
@@ -1425,11 +1679,20 @@ class NukeWrite(NukeNodeBase):
                         "tooltip": "Number of digits for frame numbers (e.g., 4 = 0001, 0002...)",
                     },
                 ),
-                "auto_sequence": (
+                "overwrite": (
                     "BOOLEAN",
                     {
-                        "default": True,
-                        "tooltip": "Auto-increment filename (image1.png, image2.png...). If disabled, overwrites existing file.",
+                        "default": False,
+                        "tooltip": (
+                            "True: overwrite existing files at the exact "
+                            "target paths (each frame is written atomically "
+                            "via a temp file + rename).\n"
+                            "False: never clobber - if any target frame "
+                            "already exists, the WHOLE sequence is written "
+                            "with a versioned base name (name_1.0001.exr, "
+                            "name_1.0002.exr, ...) so one render always "
+                            "shares one consistent name."
+                        ),
                     },
                 ),
                 "create_directories": ("BOOLEAN", {"default": True}),
@@ -1482,7 +1745,7 @@ class NukeWrite(NukeNodeBase):
         bit_depth="16f",
         compression="dwaa",
         frame_padding=4,
-        auto_sequence=True,
+        overwrite=False,
         create_directories=True,
         colorspace="raw",
         show_preview=True,
@@ -1490,7 +1753,7 @@ class NukeWrite(NukeNodeBase):
         """Write image(s) to disk. Supports rgb / rgba / multi-pass EXR."""
 
         if not file_path:
-            print("[NukeWrite] No file path specified")
+            logger.warning("[NukeWrite] No file path specified")
             return {"ui": {"images": []}, "result": (image, "")}
 
         # Branch to multi-pass writer if requested
@@ -1504,7 +1767,7 @@ class NukeWrite(NukeNodeBase):
                 bit_depth=bit_depth,
                 compression=compression,
                 frame_padding=frame_padding,
-                auto_sequence=auto_sequence,
+                overwrite=overwrite,
                 create_directories=create_directories,
                 colorspace=colorspace,
                 show_preview=show_preview,
@@ -1512,8 +1775,8 @@ class NukeWrite(NukeNodeBase):
 
         # rgb / rgba mode requires an image input
         if image is None:
-            print(f"[NukeWrite] channels='{channels}' requires the 'image' input "
-                  f"to be connected")
+            logger.error(f"[NukeWrite] channels='{channels}' requires the 'image' input "
+                         f"to be connected")
             return {"ui": {"images": []}, "result": (None, "")}
 
         # Ensure batch dimension
@@ -1577,24 +1840,55 @@ class NukeWrite(NukeNodeBase):
 
         written_paths = []
 
-        for i in range(batch_size):
-            # Get frame number
-            frame_num = frame_start + i
+        base_no_ext, ext_final = os.path.splitext(file_path)
 
-            # Determine output path - always add frame number like Nuke does
+        def build_target_paths(version: int) -> List[str]:
+            """Target paths for the whole batch, with optional _<version>
+            base-name suffix. Frame numbers are always appended, Nuke-style
+            ({base}.{frame}{ext}) when the path has no explicit token."""
+            paths = []
             if is_sequence:
                 # Explicit frame pattern in path (e.g., %04d or ####)
-                output_path = expand_frame_pattern(pattern, frame_num, padding)
+                pat = (
+                    pattern
+                    if version == 0
+                    else _versioned_sequence_pattern(pattern, version)
+                )
+                for i in range(batch_size):
+                    paths.append(expand_frame_pattern(pat, frame_start + i, padding))
             else:
-                # No explicit pattern - add frame number with underscore separator
-                # e.g., test/image -> test/image_0001.exr (based on frame_start and frame_padding)
-                base, ext = os.path.splitext(file_path)
-                frame_str = str(frame_num).zfill(padding)
-                output_path = f"{base}_{frame_str}{ext}"
+                vbase = base_no_ext if version == 0 else f"{base_no_ext}_{version}"
+                for i in range(batch_size):
+                    frame_str = str(frame_start + i).zfill(padding)
+                    paths.append(f"{vbase}.{frame_str}{ext_final}")
+            return paths
 
-            # Apply auto_sequence to avoid overwrites if enabled
-            if auto_sequence:
-                output_path = get_unique_filepath(output_path)
+        # Compute the full target set up front
+        target_paths = build_target_paths(0)
+
+        if not overwrite and any(_file_exists_case_aware(p) for p in target_paths):
+            # No-clobber mode: version the WHOLE sequence with one _N base
+            # suffix until the entire set of target paths is collision-free.
+            version = 1
+            candidate = build_target_paths(version)
+            while any(_file_exists_case_aware(p) for p in candidate):
+                version += 1
+                if version >= 100000:
+                    # Ultimate fallback: use timestamp
+                    import time
+
+                    version = int(time.time() * 1000)
+                    candidate = build_target_paths(version)
+                    break
+                candidate = build_target_paths(version)
+            target_paths = candidate
+            logger.info(
+                f"[NukeWrite] Existing frame(s) detected; writing whole "
+                f"sequence with base suffix _{version}"
+            )
+
+        for i in range(batch_size):
+            output_path = target_paths[i]
 
             # Get pixel data
             pixels = img[i].cpu().numpy()
@@ -1640,13 +1934,51 @@ class NukeWrite(NukeNodeBase):
                 metadata["oiio:ColorSpace"] = "linear"
 
             # Write the image
-            success = write_image(output_path, pixels, bit_depth, compression, metadata)
+            if overwrite:
+                # Atomic overwrite: write to a temp file in the same
+                # directory (real extension kept last so format inference
+                # still works), then os.replace onto the target.
+                tmp_base, tmp_ext = os.path.splitext(output_path)
+                tmp_path = f"{tmp_base}.__tmp{os.getpid()}{tmp_ext}"
+                success = write_image(
+                    tmp_path, pixels, bit_depth, compression, metadata
+                )
+                if success:
+                    try:
+                        os.replace(tmp_path, output_path)
+                    except OSError as e:
+                        logger.error(
+                            f"[NukeWrite] Atomic replace failed for "
+                            f"{output_path}: {e}"
+                        )
+                        success = False
+                if not success and os.path.exists(tmp_path):
+                    try:
+                        os.remove(tmp_path)
+                    except OSError:
+                        pass
+            else:
+                success = write_image(
+                    output_path, pixels, bit_depth, compression, metadata
+                )
 
             if success:
                 written_paths.append(output_path)
-                print(f"[NukeWrite] Written: {output_path}")
+                logger.info(f"[NukeWrite] Written: {output_path}")
             else:
-                print(f"[NukeWrite] Failed to write: {output_path}")
+                logger.error(f"[NukeWrite] Failed to write: {output_path}")
+
+        # Overwrite mode never deletes other files — but warn about stale
+        # frames beyond the written range (left over from a longer render).
+        if overwrite:
+            seq_pattern = (
+                pattern
+                if is_sequence
+                else f"{base_no_ext}.%0{padding}d{ext_final}"
+            )
+            _warn_stale_frames(
+                seq_pattern, frame_start, frame_start + batch_size - 1
+            )
 
         # Return paths as string
         paths_str = "\n".join(written_paths)
@@ -1668,7 +2000,7 @@ class NukeWrite(NukeNodeBase):
         bit_depth,
         compression,
         frame_padding,
-        auto_sequence,
+        overwrite,
         create_directories,
         colorspace,
         show_preview,
@@ -1685,14 +2017,14 @@ class NukeWrite(NukeNodeBase):
                 "Install with: pip install OpenImageIO"
             )
         if not passes:
-            print("[NukeWrite] channels='all_channels' but no passes bundle "
-                  "was connected")
+            logger.error("[NukeWrite] channels='all_channels' but no passes bundle "
+                         "was connected")
             return {"ui": {"images": []}, "result": (image, "")}
 
         # Force .exr (multi-channel beyond RGBA is only meaningful for EXR)
         if file_type != "exr":
-            print(f"[NukeWrite] Forcing .exr for multi-pass "
-                  f"(ignoring file_type={file_type})")
+            logger.warning(f"[NukeWrite] Forcing .exr for multi-pass "
+                           f"(ignoring file_type={file_type})")
             file_type = "exr"
 
         # Import multi-pass helpers lazily to avoid circular imports at module load
@@ -1720,15 +2052,44 @@ class NukeWrite(NukeNodeBase):
                 pattern = file_path
 
         # Multi-pass is a single frame at a time (bundle has no batch dim)
-        if is_sequence:
-            output_path = expand_frame_pattern(pattern, frame_start, padding)
-        else:
-            b, e = os.path.splitext(file_path)
-            frame_str = str(frame_start).zfill(padding)
-            output_path = f"{b}_{frame_str}{e}"
+        base_no_ext, ext_final = os.path.splitext(file_path)
 
-        if auto_sequence:
-            output_path = get_unique_filepath(output_path)
+        def build_target_path(version: int) -> str:
+            """Target path with optional _<version> base-name suffix.
+            Frame number is appended Nuke-style ({base}.{frame}{ext}) when
+            the path has no explicit token."""
+            if is_sequence:
+                pat = (
+                    pattern
+                    if version == 0
+                    else _versioned_sequence_pattern(pattern, version)
+                )
+                return expand_frame_pattern(pat, frame_start, padding)
+            vbase = base_no_ext if version == 0 else f"{base_no_ext}_{version}"
+            frame_str = str(frame_start).zfill(padding)
+            return f"{vbase}.{frame_str}{ext_final}"
+
+        output_path = build_target_path(0)
+
+        if not overwrite and _file_exists_case_aware(output_path):
+            # No-clobber mode: version the base name until the target is free
+            version = 1
+            candidate = build_target_path(version)
+            while _file_exists_case_aware(candidate):
+                version += 1
+                if version >= 100000:
+                    # Ultimate fallback: use timestamp
+                    import time
+
+                    version = int(time.time() * 1000)
+                    candidate = build_target_path(version)
+                    break
+                candidate = build_target_path(version)
+            output_path = candidate
+            logger.info(
+                f"[NukeWrite] Target exists; writing multi-pass EXR with "
+                f"base suffix _{version}"
+            )
 
         if create_directories:
             os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
@@ -1790,8 +2151,8 @@ class NukeWrite(NukeNodeBase):
             fmt = oiio.HALF
         else:
             # 8 / 16 integer make little sense for multi-pass EXR — use 16f
-            print(f"[NukeWrite] bit_depth={bit_depth} not suited for multi-pass, "
-                  f"using 16f")
+            logger.warning(f"[NukeWrite] bit_depth={bit_depth} not suited for multi-pass, "
+                           f"using 16f")
             out_arr = combined.astype(np.float16)
             fmt = oiio.HALF
 
@@ -1804,22 +2165,51 @@ class NukeWrite(NukeNodeBase):
         else:
             spec.attribute("oiio:ColorSpace", "linear")
 
-        out = oiio.ImageOutput.create(output_path)
-        if out is None:
-            raise RuntimeError(f"OIIO cannot create: {output_path} "
-                               f"({oiio.geterror()})")
-        if not out.open(output_path, spec):
-            raise RuntimeError(f"OIIO open failed: {out.geterror()}")
-        if not out.write_image(np.ascontiguousarray(out_arr)):
-            err = out.geterror()
-            out.close()
-            raise RuntimeError(f"OIIO write failed: {err}")
-        out.close()
+        if overwrite:
+            # Atomic overwrite: write to a temp file in the same directory
+            # (real extension kept last for format inference), then replace.
+            tmp_base, tmp_ext = os.path.splitext(output_path)
+            write_path = f"{tmp_base}.__tmp{os.getpid()}{tmp_ext}"
+        else:
+            write_path = output_path
 
-        print(f"[NukeWrite] Multi-pass EXR written: {output_path}")
-        print(f"[NukeWrite]   {W}x{H}, {total_ch} channels, {bit_depth}, "
-              f"compression={compression}")
-        print(f"[NukeWrite]   Channels: {', '.join(channel_names)}")
+        try:
+            out = oiio.ImageOutput.create(write_path)
+            if out is None:
+                raise RuntimeError(f"OIIO cannot create: {write_path} "
+                                   f"({oiio.geterror()})")
+            if not out.open(write_path, spec):
+                raise RuntimeError(f"OIIO open failed: {out.geterror()}")
+            if not out.write_image(np.ascontiguousarray(out_arr)):
+                err = out.geterror()
+                out.close()
+                raise RuntimeError(f"OIIO write failed: {err}")
+            out.close()
+
+            if overwrite:
+                os.replace(write_path, output_path)
+        except Exception:
+            if overwrite and os.path.exists(write_path):
+                try:
+                    os.remove(write_path)
+                except OSError:
+                    pass
+            raise
+
+        # Overwrite mode never deletes other files — but warn about stale
+        # frames beyond the written range (left over from a longer render).
+        if overwrite:
+            seq_pattern = (
+                pattern
+                if is_sequence
+                else f"{base_no_ext}.%0{padding}d{ext_final}"
+            )
+            _warn_stale_frames(seq_pattern, frame_start, frame_start)
+
+        logger.info(f"[NukeWrite] Multi-pass EXR written: {output_path}")
+        logger.info(f"[NukeWrite]   {W}x{H}, {total_ch} channels, {bit_depth}, "
+                    f"compression={compression}")
+        logger.info(f"[NukeWrite]   Channels: {', '.join(channel_names)}")
 
         ui_images = []
         if show_preview and image is not None and image.shape[0] > 0:
