@@ -3,21 +3,22 @@ Version information for Nuke Nodes ComfyUI package
 """
 
 # Version information
-__version__ = "1.0.0"
+# NOTE: keep in sync with the version field in pyproject.toml
+__version__ = "1.1.0"
 __version_info__ = tuple(int(part) for part in __version__.split("."))
 
 # Package metadata
 __title__ = "nuke-nodes"
 __description__ = "ComfyUI custom nodes that replicate Nuke compositing functionality"
 __author__ = "Sumit Chatterjee"
-__author_email__ = "contact@example.com"
+__author_email__ = "sumitchatterjee13@gmail.com"
 __license__ = "MIT"
-__url__ = "https://github.com/your-username/nuke-nodes"
-__copyright__ = "Copyright 2024 Sumit Chatterjee"
+__url__ = "https://github.com/sumitchatterjee13/nuke-nodes-comfyui"
+__copyright__ = "Copyright 2024-2026 Sumit Chatterjee"
 
 # ComfyUI specific information
 COMFYUI_MIN_VERSION = "0.1.0"
-PYTHON_MIN_VERSION = "3.8"
+PYTHON_MIN_VERSION = "3.9"
 
 # Node categories and count
 NODE_CATEGORIES = [
@@ -26,10 +27,13 @@ NODE_CATEGORIES = [
     "Nuke/Transform",
     "Nuke/Filter",
     "Nuke/Viewer",
+    "Nuke/IO",
+    "Nuke/Generate",
+    "Nuke/Time",
 ]
 
 # Release information
-RELEASE_DATE = "2024-09-21"
+RELEASE_DATE = "2026-07-26"
 IS_STABLE = True
 IS_BETA = False
 

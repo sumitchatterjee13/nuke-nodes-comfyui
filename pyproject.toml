@@ -5,7 +5,8 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "nuke-nodes"
 description = "ComfyUI custom nodes that replicate Nuke compositing functionality"
-version = "1.0.0"
+# NOTE: keep in sync with __version__ in version.py
+version = "1.1.0"
 license = {file = "LICENSE"}
 requires-python = ">=3.9"
 dynamic = ["dependencies"]
@@ -38,16 +39,17 @@ exclude = ["tests*", "docs*", "examples*"]
 [tool.comfy]
 PublisherId = "sumit"
 DisplayName = "Nuke Nodes"
+requires-comfyui = ">=0.3.0"
 
 [tool.black]
 line-length = 88
-target-version = ['py38', 'py39', 'py310', 'py311']
+target-version = ['py39', 'py310', 'py311', 'py312']
 
 [tool.isort]
 profile = "black"
 
 [tool.mypy]
-python_version = "3.8"
+python_version = "3.9"
 warn_return_any = true
 warn_unused_configs = true
 disallow_untyped_defs = true

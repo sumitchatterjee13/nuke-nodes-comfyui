@@ -11,6 +11,8 @@ A comprehensive collection of ComfyUI custom nodes that replicate the functional
 - **Generate Nodes**: Create solid colors, ramps, and test patterns
 - **Grade Nodes**: Professional color correction and grading tools
 - **Transform Nodes**: Precise geometric transformations with filtering options
+- **Reformat Node**: Nuke-style Reformat with format presets, custom formats, and all resize types
+- **Time Nodes**: FrameHold for batch-as-timeline frame holding
 - **Blur Nodes**: Various blur algorithms including Gaussian, motion, and directional blur
 
 ## Installation
@@ -36,7 +38,7 @@ pip install -r requirements.txt
 **OpenImageIO provides professional-grade image I/O with wide format support.**
 
 - **NukeRead**: Load images or image sequences from disk
-  - **file_path**: Path to image or sequence (supports `%04d` and `####` patterns)
+  - **file_path**: Path to image or sequence (supports `%04d` and `####` patterns — or just a bare path like `render.exr`: with *load_as_sequence* enabled the node auto-detects `render.0001.exr`-style sequences on disk, no padding token needed)
   - **frame**: Current frame number to load
   - **frame_mode**: single, range, or all frames
   - **first_frame/last_frame**: Frame range specification
@@ -65,10 +67,10 @@ pip install -r requirements.txt
   - **frame_padding**: Number of digits for frame numbers (default: 4)
     - `4` = 0001, 0002, 0003...
     - `5` = 00001, 00002, 00003...
-  - **auto_sequence**: Auto-increment filename on each run (default: false)
-    - `true`: Saves as image1.png, image2.png, image3.png... (never overwrites)
-    - `false`: Always saves to same filename (overwrites previous)
-    - Only applies when no frame pattern (%04d or ####) is used
+  - **overwrite**: Controls what happens when target files already exist (default: false)
+    - `false` (safe): if **any** frame of the sequence exists, the whole batch is written under a versioned base name (`shot_1.0001.exr`, `shot_1.0002.exr`, ...) — one consistent name per run, nothing is ever clobbered
+    - `true`: frames replace existing files at their exact paths, written **atomically** (temp file + rename), so an interrupted render never leaves half-written frames; leftover frames from a previous longer render are warned about but never deleted
+  - **Frame naming**: when the path has no `%04d`/`####` pattern, frame numbers are appended Nuke-style with a dot: `name.0001.exr` (v1.0 used `name_0001.exr`)
   - **create_directories**: Auto-create output directories
   - **colorspace**: Apply colorspace conversion on write
 
@@ -83,6 +85,7 @@ pip install -r requirements.txt
 - `image.%04d.exr` - Printf style with padding (0001, 0002, ...)
 - `image.####.exr` - Hash padding (0001, 0002, ...)
 - `image.0001.exr` - Auto-detects sequence from single frame
+- `image.exr` - Bare path: auto-detects `image.0001.exr` / `image_0001.exr` / `image0001.exr` sequences in the same folder (read nodes, when *load_as_sequence* is on)
 
 **I/O Library Priority:** OpenImageIO > OpenCV > PIL
 
@@ -200,6 +203,22 @@ ACES2065-1, ACEScc, ACEScct, ACEScg, ADX10, ADX16, ARRI LogC3 (EI800), ARRI LogC
   - **invert**: Invert the transformation matrix
 - **NukeCornerPin**: Four-corner distortion for perspective correction
 - **NukeCrop**: Precise cropping with soft edges
+- **NukeReformat**: Full port of Nuke's Reformat node
+  - **type**: `to format` (pick a format preset), `to box` (explicit width/height/pixel aspect), or `scale` (multiply input size)
+  - **format**: 16 standard Nuke formats (HD_1080, UHD_4K, 2K_DCP, 4K_DCP, 2K/4K_Super_35, PAL, NTSC, squares, ...) plus your own saved formats
+  - **Custom formats**: choose `custom`, set width/height/pixel aspect, and optionally enter a name in **save_format_as** — the format is persisted (JSON in the ComfyUI user directory) and appears in the dropdown afterwards, like Nuke's "new..." format
+  - **resize_type**: `none`, `width`, `height`, `fit`, `fill`, `distort` — pixel-aspect-aware math matching Nuke's behavior
+  - **center / flip / flop / turn**: placement and orientation controls (turn = 90° CCW)
+  - **black_outside**: pad with black, or replicate edge pixels when off
+  - **filter**: impulse, cubic, lanczos, area
+  - **input_pixel_aspect**: pixel aspect of the incoming image (default 1.0; ComfyUI tensors carry no PA metadata, so set this when your source is anamorphic/PAL/NTSC)
+
+### Time Nodes
+- **NukeFrameHold**: Hold a frame across the batch, matching Nuke's FrameHold
+  - Treats the image batch as a timeline: **frame_start** is the frame number of the first batch item
+  - **first_frame**: the frame to hold; with **increment** = 0 every output frame shows *first_frame*
+  - **increment** = N: output steps through held frames *first, first+N, first+2N, ...* (e.g. first_frame=1, increment=5 over frames 1-15 → 1,1,1,1,1,6,6,6,6,6,11,11,11,11,11)
+  - Output batch has the same length as the input; out-of-range holds clamp to the available frames
 
 ### Blur Nodes
 - **NukeBlur**: Gaussian blur with separate X/Y controls
