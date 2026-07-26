@@ -13,12 +13,15 @@ Supported LUT formats:
 LUT files should be placed in the ./luts folder relative to this package.
 """
 
+import logging
 import os
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple, Union
 
 import numpy as np
 import torch
+
+logger = logging.getLogger(__name__)
 
 from .utils import NukeNodeBase, ensure_batch_dim, normalize_tensor
 
@@ -328,7 +331,7 @@ def load_lut(filepath: Union[str, Path]) -> Optional[Dict]:
     filepath = Path(filepath)
 
     if not filepath.exists():
-        print(f"[NukeVectorField] LUT file not found: {filepath}")
+        logger.error(f"[NukeVectorField] LUT file not found: {filepath}")
         return None
 
     ext = filepath.suffix.lower()
@@ -343,10 +346,10 @@ def load_lut(filepath: Union[str, Path]) -> Optional[Dict]:
         elif ext == ".spi1d":
             return parse_spi1d_lut(filepath)
         else:
-            print(f"[NukeVectorField] Unsupported LUT format: {ext}")
+            logger.error(f"[NukeVectorField] Unsupported LUT format: {ext}")
             return None
     except Exception as e:
-        print(f"[NukeVectorField] Error loading LUT: {e}")
+        logger.error(f"[NukeVectorField] Error loading LUT: {e}")
         return None
 
 
@@ -421,7 +424,7 @@ def apply_3d_lut(image: np.ndarray, lut_data: Dict) -> np.ndarray:
     try:
         lut_3d = lut.reshape((size, size, size, 3))
     except ValueError:
-        print(
+        logger.error(
             f"[NukeVectorField] LUT data size mismatch. Expected {size**3} entries, got {len(lut)}"
         )
         return image
@@ -541,9 +544,23 @@ class NukeVectorfield(NukeNodeBase):
     CATEGORY = "Nuke/Color"
 
     @classmethod
-    def IS_CHANGED(cls, **kwargs):
-        # Check if LUT files have changed
-        return float("nan")
+    def IS_CHANGED(cls, image, lut_file, intensity, custom_lut_path=""):
+        """Fingerprint the resolved LUT file so caching invalidates on file changes.
+
+        Mirrors the path resolution in apply_lut.
+        """
+        if custom_lut_path and os.path.exists(custom_lut_path):
+            lut_path = Path(custom_lut_path)
+        elif lut_file and lut_file != "No LUTs found":
+            lut_path = LUTS_DIR / lut_file
+        else:
+            return "no-lut"
+
+        try:
+            stat = os.stat(lut_path)
+            return f"{lut_path}:{stat.st_mtime_ns}:{stat.st_size}"
+        except OSError:
+            return f"missing:{lut_path}"
 
     def apply_lut(self, image, lut_file, intensity, custom_lut_path=""):
         """
@@ -564,7 +581,7 @@ class NukeVectorfield(NukeNodeBase):
         elif lut_file and lut_file != "No LUTs found":
             lut_path = LUTS_DIR / lut_file
         else:
-            print("[NukeVectorField] No LUT file specified")
+            logger.warning("[NukeVectorField] No LUT file specified")
             return (image,)
 
         # Load LUT (with caching)

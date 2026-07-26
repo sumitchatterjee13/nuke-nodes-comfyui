@@ -23,11 +23,14 @@ reliability and eliminate the need for config path inputs.
 Requires: pip install opencolorio (version 2.2+ recommended)
 """
 
+import logging
 import os
 from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 import torch
+
+logger = logging.getLogger(__name__)
 
 from .utils import NukeNodeBase, ensure_batch_dim, normalize_tensor
 
@@ -101,10 +104,12 @@ try:
 
     OCIO_AVAILABLE = True
     OCIO_VERSION = OCIO.GetVersion()
-    print(f"[NukeOCIO] OpenColorIO version: {OCIO_VERSION}")
+    logger.info(f"[NukeOCIO] OpenColorIO version: {OCIO_VERSION}")
 except ImportError:
     OCIO = None
-    print("[NukeOCIO] OpenColorIO not installed. Install with: pip install opencolorio")
+    logger.warning(
+        "[NukeOCIO] OpenColorIO not installed. Install with: pip install opencolorio"
+    )
 
 # Studio config names to try (in order of preference)
 # These include all camera IDTs (ARRI, Sony, RED, Canon, etc.)
@@ -132,8 +137,8 @@ def load_studio_config():
             config = OCIO.Config.CreateFromBuiltinConfig(config_name)
             if config:
                 OCIO_CONFIG = config
-                print(f"[NukeOCIO] Loaded {config_name}")
-                print(
+                logger.info(f"[NukeOCIO] Loaded {config_name}")
+                logger.info(
                     f"[NukeOCIO] Using hardcoded colorspaces: {len(ACES_STUDIO_COLORSPACES)} available"
                 )
 
@@ -147,14 +152,16 @@ def load_studio_config():
                     )
                 ]
                 if camera_cs:
-                    print(f"[NukeOCIO] Camera colorspaces available: {len(camera_cs)}")
+                    logger.info(
+                        f"[NukeOCIO] Camera colorspaces available: {len(camera_cs)}"
+                    )
 
                 return config
         except Exception as e:
-            print(f"[NukeOCIO] Could not load {config_name}: {e}")
+            logger.warning(f"[NukeOCIO] Could not load {config_name}: {e}")
             continue
 
-    print("[NukeOCIO] WARNING: Could not load any ACES Studio Config")
+    logger.warning("[NukeOCIO] WARNING: Could not load any ACES Studio Config")
     return None
 
 
@@ -181,7 +188,7 @@ def get_ocio_config(config_path: Optional[str] = None) -> Optional["OCIO.Config"
         try:
             return OCIO.Config.CreateFromFile(config_path)
         except Exception as e:
-            print(f"[NukeOCIO] Could not load custom config '{config_path}': {e}")
+            logger.warning(f"[NukeOCIO] Could not load custom config '{config_path}': {e}")
 
     # Return cached Studio Config
     return OCIO_CONFIG
@@ -325,7 +332,7 @@ def apply_ocio_transform(
         return result
 
     except Exception as e:
-        print(f"[NukeOCIO] Error applying transform: {e}")
+        logger.error(f"[NukeOCIO] Error applying transform: {e}")
         return image_np
 
 
@@ -395,15 +402,11 @@ class NukeOCIOColorSpace(NukeNodeBase):
     FUNCTION = "transform_colorspace"
     CATEGORY = "Nuke/Color"
 
-    @classmethod
-    def IS_CHANGED(cls, **kwargs):
-        return float("nan")
-
     def transform_colorspace(self, image, config, in_colorspace, out_colorspace):
         """Transform image from one color space to another using OCIO."""
 
         if not OCIO_AVAILABLE:
-            print(
+            logger.warning(
                 "[NukeOCIO] OpenColorIO not installed. Install with: pip install opencolorio"
             )
             return (image,)
@@ -416,7 +419,7 @@ class NukeOCIOColorSpace(NukeNodeBase):
         config = OCIO_CONFIG
 
         if config is None:
-            print(
+            logger.warning(
                 "[NukeOCIO] No OCIO config available. Upgrade OpenColorIO: pip install opencolorio --upgrade"
             )
             return (image,)
@@ -505,10 +508,6 @@ class NukeOCIODisplay(NukeNodeBase):
     FUNCTION = "apply_display"
     CATEGORY = "Nuke/Color"
 
-    @classmethod
-    def IS_CHANGED(cls, **kwargs):
-        return float("nan")
-
     def apply_display(
         self, image, config, display, view, input_colorspace, invert="forward"
     ):
@@ -520,7 +519,7 @@ class NukeOCIODisplay(NukeNodeBase):
         """
 
         if not OCIO_AVAILABLE:
-            print(
+            logger.warning(
                 "[NukeOCIO] OpenColorIO not installed. Install with: pip install opencolorio"
             )
             return (image,)
@@ -529,7 +528,7 @@ class NukeOCIODisplay(NukeNodeBase):
         config = OCIO_CONFIG
 
         if config is None:
-            print("[NukeOCIO] No OCIO config available.")
+            logger.warning("[NukeOCIO] No OCIO config available.")
             return (image,)
 
         try:
@@ -601,7 +600,7 @@ class NukeOCIODisplay(NukeNodeBase):
             return (result,)
 
         except Exception as e:
-            print(f"[NukeOCIO] Error applying display transform: {e}")
+            logger.error(f"[NukeOCIO] Error applying display transform: {e}")
             return (image,)
 
 
@@ -623,10 +622,6 @@ class NukeOCIOInfo(NukeNodeBase):
     FUNCTION = "get_info"
     CATEGORY = "Nuke/Color"
     OUTPUT_NODE = True
-
-    @classmethod
-    def IS_CHANGED(cls, **kwargs):
-        return float("nan")
 
     def get_info(self):
         """Get OCIO configuration information."""
@@ -818,8 +813,31 @@ class NukeOCIOFileTransform(NukeNodeBase):
     CATEGORY = "Nuke/Color"
 
     @classmethod
-    def IS_CHANGED(cls, **kwargs):
-        return float("nan")
+    def IS_CHANGED(
+        cls,
+        image,
+        lut_file,
+        direction="forward",
+        interpolation="default",
+        mix=1.0,
+        custom_lut_path="",
+    ):
+        """Fingerprint the resolved LUT file so caching invalidates on file changes.
+
+        Mirrors the path resolution in apply_file_transform.
+        """
+        if custom_lut_path and os.path.exists(custom_lut_path):
+            lut_path = custom_lut_path
+        elif lut_file and lut_file != "No LUTs found":
+            lut_path = str(_LUTS_DIR / lut_file)
+        else:
+            return "no-lut"
+
+        try:
+            stat = os.stat(lut_path)
+            return f"{lut_path}:{stat.st_mtime_ns}:{stat.st_size}"
+        except OSError:
+            return f"missing:{lut_path}"
 
     def apply_file_transform(
         self,
@@ -833,7 +851,7 @@ class NukeOCIOFileTransform(NukeNodeBase):
         """Apply an OCIO FileTransform LUT to the input image."""
 
         if not OCIO_AVAILABLE:
-            print(
+            logger.warning(
                 "[NukeOCIOFileTransform] OpenColorIO not installed. "
                 "Install with: pip install opencolorio"
             )
@@ -845,11 +863,11 @@ class NukeOCIOFileTransform(NukeNodeBase):
         elif lut_file and lut_file != "No LUTs found":
             lut_path = str(_LUTS_DIR / lut_file)
         else:
-            print("[NukeOCIOFileTransform] No LUT file specified")
+            logger.warning("[NukeOCIOFileTransform] No LUT file specified")
             return (image,)
 
         if not os.path.exists(lut_path):
-            print(f"[NukeOCIOFileTransform] LUT file not found: {lut_path}")
+            logger.error(f"[NukeOCIOFileTransform] LUT file not found: {lut_path}")
             return (image,)
 
         try:
@@ -934,7 +952,7 @@ class NukeOCIOFileTransform(NukeNodeBase):
             return (result,)
 
         except Exception as e:
-            print(f"[NukeOCIOFileTransform] Error applying transform: {e}")
+            logger.error(f"[NukeOCIOFileTransform] Error applying transform: {e}")
             return (image,)
 
 
