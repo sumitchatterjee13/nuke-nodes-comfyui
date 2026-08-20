@@ -4,7 +4,7 @@ Version information for Nuke Nodes ComfyUI package
 
 # Version information
 # NOTE: keep in sync with the version field in pyproject.toml
-__version__ = "1.1.0"
+__version__ = "1.2.0"
 __version_info__ = tuple(int(part) for part in __version__.split("."))
 
 # Package metadata
@@ -33,7 +33,7 @@ NODE_CATEGORIES = [
 ]
 
 # Release information
-RELEASE_DATE = "2026-07-26"
+RELEASE_DATE = "2026-08-20"
 IS_STABLE = True
 IS_BETA = False
 

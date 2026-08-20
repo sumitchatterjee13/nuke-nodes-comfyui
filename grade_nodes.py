@@ -419,13 +419,14 @@ class NukeLevels(NukeNodeBase):
             alpha = None
 
         # Apply input levels
-        input_range = input_white - input_black
-        input_range = torch.clamp(input_range, min=1e-7)  # Avoid division by zero
+        # input_black/white and gamma are python floats (widget values), so
+        # guard with max() - torch.clamp() on a float raises TypeError
+        input_range = max(input_white - input_black, 1e-7)  # Avoid division by zero
 
         rgb_normalized = torch.clamp((rgb - input_black) / input_range, 0.0, 1.0)
 
         # Apply gamma
-        rgb_gamma = torch.pow(rgb_normalized, 1.0 / torch.clamp(gamma, min=0.1))
+        rgb_gamma = torch.pow(rgb_normalized, 1.0 / max(gamma, 0.1))
 
         # Apply output levels
         output_range = output_white - output_black

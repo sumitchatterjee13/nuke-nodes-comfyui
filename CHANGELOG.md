@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.2.0] - 2026-08-20
+
+### Fixed
+
+- **NukeLevels** no longer crashes on execution (`torch.clamp()` was called on plain float widget values, so the node raised `TypeError` on every run in all previous releases).
+
+### Known issues (pre-existing)
+
+- **NukeMotionBlur** fails on batches larger than 1 frame (sampling grid is not batch-expanded).
+- **NukeTransform / NukeCornerPin** have a half-pixel resampling offset at identity parameters.
+
 ## [1.1.0] - 2026-07-26
 
 ### Added
