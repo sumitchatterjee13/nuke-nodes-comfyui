@@ -112,3 +112,6 @@ Thumbs.db
 
 # Instruction files
 comfyui-updated-instruction.md
+
+# Internal rebuild specification (generated, not for publishing)
+docs/superpowers/plans/*airtight-rebuild-spec*.md

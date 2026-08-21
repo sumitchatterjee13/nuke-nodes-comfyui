@@ -1,0 +1,2674 @@
+{
+ "NukeBlur": {
+  "class": "NukeBlur",
+  "module": "blur_nodes",
+  "display_name": "Nuke Blur",
+  "category": "Nuke/Filter",
+  "function": "blur",
+  "return_types": [
+   "IMAGE"
+  ],
+  "return_names": null,
+  "output_node": false,
+  "has_is_changed": false,
+  "has_validate": false,
+  "doc": "Gaussian blur node with separate X/Y controls (similar to Nuke's Blur node)",
+  "inputs_required": {
+   "image": {
+    "type": "IMAGE",
+    "config": {}
+   },
+   "size_x": {
+    "type": "FLOAT",
+    "config": {
+     "default": 1.0,
+     "min": 0.0,
+     "max": 100.0,
+     "step": 0.1
+    }
+   },
+   "size_y": {
+    "type": "FLOAT",
+    "config": {
+     "default": 1.0,
+     "min": 0.0,
+     "max": 100.0,
+     "step": 0.1
+    }
+   },
+   "filter": {
+    "type": [
+     "gaussian",
+     "box",
+     "triangle",
+     "quadratic"
+    ],
+    "config": {
+     "default": "gaussian"
+    }
+   },
+   "quality": {
+    "type": [
+     "low",
+     "medium",
+     "high"
+    ],
+    "config": {
+     "default": "medium"
+    }
+   },
+   "crop": {
+    "type": "BOOLEAN",
+    "config": {
+     "default": true
+    }
+   },
+   "mix": {
+    "type": "FLOAT",
+    "config": {
+     "default": 1.0,
+     "min": 0.0,
+     "max": 1.0,
+     "step": 0.01
+    }
+   }
+  },
+  "inputs_optional": {
+   "mask": {
+    "type": "IMAGE",
+    "config": {}
+   }
+  },
+  "inputs_hidden": {}
+ },
+ "NukeChannelShuffle": {
+  "class": "NukeChannelShuffle",
+  "module": "viewer_nodes",
+  "display_name": "Nuke Channel Shuffle",
+  "category": "Nuke/Viewer",
+  "function": "shuffle",
+  "return_types": [
+   "IMAGE"
+  ],
+  "return_names": null,
+  "output_node": false,
+  "has_is_changed": false,
+  "has_validate": false,
+  "doc": "Channel shuffle node for rearranging RGBA channels",
+  "inputs_required": {
+   "image": {
+    "type": "IMAGE",
+    "config": {}
+   },
+   "red_from": {
+    "type": [
+     "red",
+     "green",
+     "blue",
+     "alpha",
+     "zero",
+     "one"
+    ],
+    "config": {
+     "default": "red"
+    }
+   },
+   "green_from": {
+    "type": [
+     "red",
+     "green",
+     "blue",
+     "alpha",
+     "zero",
+     "one"
+    ],
+    "config": {
+     "default": "green"
+    }
+   },
+   "blue_from": {
+    "type": [
+     "red",
+     "green",
+     "blue",
+     "alpha",
+     "zero",
+     "one"
+    ],
+    "config": {
+     "default": "blue"
+    }
+   },
+   "alpha_from": {
+    "type": [
+     "red",
+     "green",
+     "blue",
+     "alpha",
+     "zero",
+     "one"
+    ],
+    "config": {
+     "default": "alpha"
+    }
+   }
+  },
+  "inputs_optional": {},
+  "inputs_hidden": {}
+ },
+ "NukeColorBars": {
+  "class": "NukeColorBars",
+  "module": "viewer_nodes",
+  "display_name": "Nuke Color Bars",
+  "category": "Nuke/Viewer",
+  "function": "generate_bars",
+  "return_types": [
+   "IMAGE"
+  ],
+  "return_names": null,
+  "output_node": false,
+  "has_is_changed": false,
+  "has_validate": false,
+  "doc": "Generate standard color bars for testing",
+  "inputs_required": {
+   "width": {
+    "type": "INT",
+    "config": {
+     "default": 512,
+     "min": 64,
+     "max": 4096,
+     "step": 1
+    }
+   },
+   "height": {
+    "type": "INT",
+    "config": {
+     "default": 512,
+     "min": 64,
+     "max": 4096,
+     "step": 1
+    }
+   },
+   "pattern": {
+    "type": [
+     "smpte",
+     "rgb_bars",
+     "primary_colors",
+     "grayscale"
+    ],
+    "config": {
+     "default": "smpte"
+    }
+   },
+   "batch_size": {
+    "type": "INT",
+    "config": {
+     "default": 1,
+     "min": 1,
+     "max": 64,
+     "step": 1
+    }
+   }
+  },
+  "inputs_optional": {},
+  "inputs_hidden": {}
+ },
+ "NukeColorCorrect": {
+  "class": "NukeColorCorrect",
+  "module": "grade_nodes",
+  "display_name": "Nuke Color Correct",
+  "category": "Nuke/Color",
+  "function": "color_correct",
+  "return_types": [
+   "IMAGE"
+  ],
+  "return_names": null,
+  "output_node": false,
+  "has_is_changed": false,
+  "has_validate": false,
+  "doc": "HSV-based color correction node",
+  "inputs_required": {
+   "image": {
+    "type": "IMAGE",
+    "config": {}
+   },
+   "hue": {
+    "type": "FLOAT",
+    "config": {
+     "default": 0.0,
+     "min": -180.0,
+     "max": 180.0,
+     "step": 1.0
+    }
+   },
+   "saturation": {
+    "type": "FLOAT",
+    "config": {
+     "default": 1.0,
+     "min": 0.0,
+     "max": 3.0,
+     "step": 0.01
+    }
+   },
+   "value": {
+    "type": "FLOAT",
+    "config": {
+     "default": 1.0,
+     "min": 0.0,
+     "max": 3.0,
+     "step": 0.01
+    }
+   },
+   "contrast": {
+    "type": "FLOAT",
+    "config": {
+     "default": 1.0,
+     "min": 0.0,
+     "max": 3.0,
+     "step": 0.01
+    }
+   },
+   "mix": {
+    "type": "FLOAT",
+    "config": {
+     "default": 1.0,
+     "min": 0.0,
+     "max": 1.0,
+     "step": 0.01
+    }
+   }
+  },
+  "inputs_optional": {},
+  "inputs_hidden": {}
+ },
+ "NukeConstant": {
+  "class": "NukeConstant",
+  "module": "merge_nodes",
+  "display_name": "Nuke Constant",
+  "category": "Nuke/Generate",
+  "function": "generate",
+  "return_types": [
+   "IMAGE"
+  ],
+  "return_names": null,
+  "output_node": false,
+  "has_is_changed": false,
+  "has_validate": false,
+  "doc": "Constant node that generates a solid color image, similar to Nuke's Constant node.\n\n    Creates a solid color image with configurable RGBA values, width, and height.\n    The output can be used as a background, matte, or connected to any node expecting an image.",
+  "inputs_required": {
+   "width": {
+    "type": "INT",
+    "config": {
+     "default": 512,
+     "min": 1,
+     "max": 8192,
+     "step": 1
+    }
+   },
+   "height": {
+    "type": "INT",
+    "config": {
+     "default": 512,
+     "min": 1,
+     "max": 8192,
+     "step": 1
+    }
+   },
+   "red": {
+    "type": "FLOAT",
+    "config": {
+     "default": 0.0,
+     "min": 0.0,
+     "max": 1.0,
+     "step": 0.01
+    }
+   },
+   "green": {
+    "type": "FLOAT",
+    "config": {
+     "default": 0.0,
+     "min": 0.0,
+     "max": 1.0,
+     "step": 0.01
+    }
+   },
+   "blue": {
+    "type": "FLOAT",
+    "config": {
+     "default": 0.0,
+     "min": 0.0,
+     "max": 1.0,
+     "step": 0.01
+    }
+   },
+   "alpha": {
+    "type": "FLOAT",
+    "config": {
+     "default": 1.0,
+     "min": 0.0,
+     "max": 1.0,
+     "step": 0.01
+    }
+   },
+   "output_alpha": {
+    "type": "BOOLEAN",
+    "config": {
+     "default": false
+    }
+   }
+  },
+  "inputs_optional": {
+   "batch_size": {
+    "type": "INT",
+    "config": {
+     "default": 1,
+     "min": 1,
+     "max": 64,
+     "step": 1
+    }
+   }
+  },
+  "inputs_hidden": {}
+ },
+ "NukeCornerPin": {
+  "class": "NukeCornerPin",
+  "module": "transform_nodes",
+  "display_name": "Nuke Corner Pin",
+  "category": "Nuke/Transform",
+  "function": "corner_pin",
+  "return_types": [
+   "IMAGE"
+  ],
+  "return_names": null,
+  "output_node": false,
+  "has_is_changed": false,
+  "has_validate": false,
+  "doc": "Four-corner perspective transformation node with proper transparency",
+  "inputs_required": {
+   "image": {
+    "type": "IMAGE",
+    "config": {}
+   },
+   "to1_x": {
+    "type": "FLOAT",
+    "config": {
+     "default": 0.0,
+     "min": -1.0,
+     "max": 2.0,
+     "step": 0.01
+    }
+   },
+   "to1_y": {
+    "type": "FLOAT",
+    "config": {
+     "default": 0.0,
+     "min": -1.0,
+     "max": 2.0,
+     "step": 0.01
+    }
+   },
+   "to2_x": {
+    "type": "FLOAT",
+    "config": {
+     "default": 1.0,
+     "min": -1.0,
+     "max": 2.0,
+     "step": 0.01
+    }
+   },
+   "to2_y": {
+    "type": "FLOAT",
+    "config": {
+     "default": 0.0,
+     "min": -1.0,
+     "max": 2.0,
+     "step": 0.01
+    }
+   },
+   "to3_x": {
+    "type": "FLOAT",
+    "config": {
+     "default": 1.0,
+     "min": -1.0,
+     "max": 2.0,
+     "step": 0.01
+    }
+   },
+   "to3_y": {
+    "type": "FLOAT",
+    "config": {
+     "default": 1.0,
+     "min": -1.0,
+     "max": 2.0,
+     "step": 0.01
+    }
+   },
+   "to4_x": {
+    "type": "FLOAT",
+    "config": {
+     "default": 0.0,
+     "min": -1.0,
+     "max": 2.0,
+     "step": 0.01
+    }
+   },
+   "to4_y": {
+    "type": "FLOAT",
+    "config": {
+     "default": 1.0,
+     "min": -1.0,
+     "max": 2.0,
+     "step": 0.01
+    }
+   },
+   "filter": {
+    "type": [
+     "nearest",
+     "bilinear"
+    ],
+    "config": {
+     "default": "bilinear"
+    }
+   }
+  },
+  "inputs_optional": {},
+  "inputs_hidden": {}
+ },
+ "NukeCrop": {
+  "class": "NukeCrop",
+  "module": "transform_nodes",
+  "display_name": "Nuke Crop",
+  "category": "Nuke/Transform",
+  "function": "crop",
+  "return_types": [
+   "IMAGE"
+  ],
+  "return_names": null,
+  "output_node": false,
+  "has_is_changed": false,
+  "has_validate": false,
+  "doc": "Precise cropping node with soft edges",
+  "inputs_required": {
+   "image": {
+    "type": "IMAGE",
+    "config": {}
+   },
+   "left": {
+    "type": "FLOAT",
+    "config": {
+     "default": 0.0,
+     "min": 0.0,
+     "max": 1.0,
+     "step": 0.01
+    }
+   },
+   "right": {
+    "type": "FLOAT",
+    "config": {
+     "default": 1.0,
+     "min": 0.0,
+     "max": 1.0,
+     "step": 0.01
+    }
+   },
+   "top": {
+    "type": "FLOAT",
+    "config": {
+     "default": 0.0,
+     "min": 0.0,
+     "max": 1.0,
+     "step": 0.01
+    }
+   },
+   "bottom": {
+    "type": "FLOAT",
+    "config": {
+     "default": 1.0,
+     "min": 0.0,
+     "max": 1.0,
+     "step": 0.01
+    }
+   },
+   "softness": {
+    "type": "FLOAT",
+    "config": {
+     "default": 0.0,
+     "min": 0.0,
+     "max": 0.1,
+     "step": 0.001
+    }
+   },
+   "resize": {
+    "type": [
+     "crop",
+     "format"
+    ],
+    "config": {
+     "default": "crop"
+    }
+   }
+  },
+  "inputs_optional": {},
+  "inputs_hidden": {}
+ },
+ "NukeDefocus": {
+  "class": "NukeDefocus",
+  "module": "blur_nodes",
+  "display_name": "Nuke Defocus",
+  "category": "Nuke/Filter",
+  "function": "defocus",
+  "return_types": [
+   "IMAGE"
+  ],
+  "return_names": null,
+  "output_node": false,
+  "has_is_changed": false,
+  "has_validate": false,
+  "doc": "Depth-of-field style defocus blur",
+  "inputs_required": {
+   "image": {
+    "type": "IMAGE",
+    "config": {}
+   },
+   "defocus": {
+    "type": "FLOAT",
+    "config": {
+     "default": 1.0,
+     "min": 0.0,
+     "max": 20.0,
+     "step": 0.1
+    }
+   },
+   "aspect_ratio": {
+    "type": "FLOAT",
+    "config": {
+     "default": 1.0,
+     "min": 0.1,
+     "max": 3.0,
+     "step": 0.01
+    }
+   },
+   "quality": {
+    "type": [
+     "low",
+     "medium",
+     "high"
+    ],
+    "config": {
+     "default": "medium"
+    }
+   },
+   "method": {
+    "type": [
+     "gaussian",
+     "disk",
+     "hexagon"
+    ],
+    "config": {
+     "default": "disk"
+    }
+   },
+   "mix": {
+    "type": "FLOAT",
+    "config": {
+     "default": 1.0,
+     "min": 0.0,
+     "max": 1.0,
+     "step": 0.01
+    }
+   }
+  },
+  "inputs_optional": {
+   "depth_map": {
+    "type": "IMAGE",
+    "config": {}
+   },
+   "focus_distance": {
+    "type": "FLOAT",
+    "config": {
+     "default": 0.5,
+     "min": 0.0,
+     "max": 1.0,
+     "step": 0.01
+    }
+   }
+  },
+  "inputs_hidden": {}
+ },
+ "NukeExposure": {
+  "class": "NukeExposure",
+  "module": "grade_nodes",
+  "display_name": "Nuke Exposure",
+  "category": "Nuke/Color",
+  "function": "adjust_exposure",
+  "return_types": [
+   "IMAGE"
+  ],
+  "return_names": null,
+  "output_node": false,
+  "has_is_changed": false,
+  "has_validate": false,
+  "doc": "Exposure adjustment node that replicates Nuke's Exposure node functionality",
+  "inputs_required": {
+   "image": {
+    "type": "IMAGE",
+    "config": {}
+   },
+   "stops": {
+    "type": "FLOAT",
+    "config": {
+     "default": 0.0,
+     "min": -10.0,
+     "max": 10.0,
+     "step": 0.1
+    }
+   },
+   "exposure_type": {
+    "type": [
+     "stops",
+     "printer_lights",
+     "film_density"
+    ],
+    "config": {
+     "default": "stops"
+    }
+   },
+   "multiply": {
+    "type": "FLOAT",
+    "config": {
+     "default": 1.0,
+     "min": 0.0,
+     "max": 10.0,
+     "step": 0.01
+    }
+   },
+   "offset": {
+    "type": "FLOAT",
+    "config": {
+     "default": 0.0,
+     "min": -1.0,
+     "max": 1.0,
+     "step": 0.01
+    }
+   },
+   "clamp_output": {
+    "type": "BOOLEAN",
+    "config": {
+     "default": true
+    }
+   },
+   "mix": {
+    "type": "FLOAT",
+    "config": {
+     "default": 1.0,
+     "min": 0.0,
+     "max": 1.0,
+     "step": 0.01
+    }
+   }
+  },
+  "inputs_optional": {
+   "mask": {
+    "type": "IMAGE",
+    "config": {}
+   }
+  },
+  "inputs_hidden": {}
+ },
+ "NukeExposureAdvanced": {
+  "class": "NukeExposureAdvanced",
+  "module": "grade_nodes",
+  "display_name": "Nuke Exposure Advanced",
+  "category": "Nuke/Color",
+  "function": "adjust_exposure_advanced",
+  "return_types": [
+   "IMAGE"
+  ],
+  "return_names": null,
+  "output_node": false,
+  "has_is_changed": false,
+  "has_validate": false,
+  "doc": "Advanced exposure node with separate RGB channel controls",
+  "inputs_required": {
+   "image": {
+    "type": "IMAGE",
+    "config": {}
+   },
+   "stops": {
+    "type": "FLOAT",
+    "config": {
+     "default": 0.0,
+     "min": -10.0,
+     "max": 10.0,
+     "step": 0.1
+    }
+   },
+   "stops_r_offset": {
+    "type": "FLOAT",
+    "config": {
+     "default": 0.0,
+     "min": -5.0,
+     "max": 5.0,
+     "step": 0.1
+    }
+   },
+   "stops_g_offset": {
+    "type": "FLOAT",
+    "config": {
+     "default": 0.0,
+     "min": -5.0,
+     "max": 5.0,
+     "step": 0.1
+    }
+   },
+   "stops_b_offset": {
+    "type": "FLOAT",
+    "config": {
+     "default": 0.0,
+     "min": -5.0,
+     "max": 5.0,
+     "step": 0.1
+    }
+   },
+   "exposure_type": {
+    "type": [
+     "stops",
+     "printer_lights",
+     "film_density"
+    ],
+    "config": {
+     "default": "stops"
+    }
+   },
+   "preserve_highlights": {
+    "type": "BOOLEAN",
+    "config": {
+     "default": false
+    }
+   },
+   "clamp_output": {
+    "type": "BOOLEAN",
+    "config": {
+     "default": true
+    }
+   },
+   "mix": {
+    "type": "FLOAT",
+    "config": {
+     "default": 1.0,
+     "min": 0.0,
+     "max": 1.0,
+     "step": 0.01
+    }
+   }
+  },
+  "inputs_optional": {
+   "mask": {
+    "type": "IMAGE",
+    "config": {}
+   }
+  },
+  "inputs_hidden": {}
+ },
+ "NukeFrameHold": {
+  "class": "NukeFrameHold",
+  "module": "time_nodes",
+  "display_name": "Nuke FrameHold",
+  "category": "Nuke/Time",
+  "function": "frame_hold",
+  "return_types": [
+   "IMAGE"
+  ],
+  "return_names": null,
+  "output_node": false,
+  "has_is_changed": false,
+  "has_validate": false,
+  "doc": "FrameHold - hold (freeze) frames of a batch, matching Nuke's FrameHold node.\n\n    Batch-as-timeline model:\n        The input IMAGE batch of B frames is interpreted as a contiguous\n        frame range on a timeline. Batch item 0 is timeline frame\n        ``frame_start``, item 1 is ``frame_start + 1``, and so on, up to\n        item B-1 at timeline frame ``frame_start + B - 1``.\n\n    For each output item i (timeline frame t = frame_start + i):\n        - increment == 0:\n            held = first_frame\n            (the classic FrameHold: every output frame shows first_frame)\n        - increment > 0:\n            held = first_frame + increment * floor((t - first_frame) / increment)\n            (frames advance in steps of ``increment`` starting at\n            ``first_frame``; floor division handles t < first_frame by\n            stepping backwards, before clamping)\n        The held frame number is then clamped into the available range\n        [frame_start, frame_start + B - 1], and:\n            out[i] = in[held - frame_start]\n\n    The output batch always has the same length as the input batch.\n\n    Example:\n        first_frame=1, increment=5, frame_start=1, batch of 15 frames\n        (timeline frames 1..15) -> held frames:\n            1, 1, 1, 1, 1, 6, 6, 6, 6, 6, 11, 11, 11, 11, 11\n        i.e. the sequence freezes on frame 1 for 5 frames, then jumps to\n        frame 6 for 5 frames, then frame 11 for the rest.",
+  "inputs_required": {
+   "image": {
+    "type": "IMAGE",
+    "config": {
+     "tooltip": "Input frame batch, treated as a timeline: batch item i is timeline frame frame_start + i."
+    }
+   },
+   "first_frame": {
+    "type": "INT",
+    "config": {
+     "default": 1,
+     "min": -100000,
+     "max": 100000,
+     "step": 1,
+     "tooltip": "Timeline frame number to hold. With increment=0 every output frame shows this frame; with increment>0 it is the frame where the increment stepping starts."
+    }
+   },
+   "increment": {
+    "type": "INT",
+    "config": {
+     "default": 0,
+     "min": 0,
+     "max": 100000,
+     "step": 1,
+     "tooltip": "0 = hold first_frame for the whole batch. N > 0 = advance the held frame every N frames (first_frame, first_frame+N, first_frame+2N, ...)."
+    }
+   },
+   "frame_start": {
+    "type": "INT",
+    "config": {
+     "default": 1,
+     "min": -100000,
+     "max": 100000,
+     "step": 1,
+     "tooltip": "Timeline frame number of the first batch item (batch item 0). Held frame numbers are clamped into [frame_start, frame_start + batch - 1]."
+    }
+   }
+  },
+  "inputs_optional": {},
+  "inputs_hidden": {}
+ },
+ "NukeGrade": {
+  "class": "NukeGrade",
+  "module": "grade_nodes",
+  "display_name": "Nuke Grade",
+  "category": "Nuke/Color",
+  "function": "grade",
+  "return_types": [
+   "IMAGE"
+  ],
+  "return_names": null,
+  "output_node": false,
+  "has_is_changed": false,
+  "has_validate": false,
+  "doc": "Professional color grading node with lift, gamma, gain controls (similar to Nuke's Grade node)",
+  "inputs_required": {
+   "image": {
+    "type": "IMAGE",
+    "config": {}
+   },
+   "lift": {
+    "type": "FLOAT",
+    "config": {
+     "default": 0.0,
+     "min": -1.0,
+     "max": 1.0,
+     "step": 0.01
+    }
+   },
+   "lift_r_offset": {
+    "type": "FLOAT",
+    "config": {
+     "default": 0.0,
+     "min": -1.0,
+     "max": 1.0,
+     "step": 0.01
+    }
+   },
+   "lift_g_offset": {
+    "type": "FLOAT",
+    "config": {
+     "default": 0.0,
+     "min": -1.0,
+     "max": 1.0,
+     "step": 0.01
+    }
+   },
+   "lift_b_offset": {
+    "type": "FLOAT",
+    "config": {
+     "default": 0.0,
+     "min": -1.0,
+     "max": 1.0,
+     "step": 0.01
+    }
+   },
+   "gamma": {
+    "type": "FLOAT",
+    "config": {
+     "default": 1.0,
+     "min": 0.1,
+     "max": 3.0,
+     "step": 0.01
+    }
+   },
+   "gamma_r_offset": {
+    "type": "FLOAT",
+    "config": {
+     "default": 0.0,
+     "min": -2.0,
+     "max": 2.0,
+     "step": 0.01
+    }
+   },
+   "gamma_g_offset": {
+    "type": "FLOAT",
+    "config": {
+     "default": 0.0,
+     "min": -2.0,
+     "max": 2.0,
+     "step": 0.01
+    }
+   },
+   "gamma_b_offset": {
+    "type": "FLOAT",
+    "config": {
+     "default": 0.0,
+     "min": -2.0,
+     "max": 2.0,
+     "step": 0.01
+    }
+   },
+   "gain": {
+    "type": "FLOAT",
+    "config": {
+     "default": 1.0,
+     "min": 0.0,
+     "max": 3.0,
+     "step": 0.01
+    }
+   },
+   "gain_r_offset": {
+    "type": "FLOAT",
+    "config": {
+     "default": 0.0,
+     "min": -2.0,
+     "max": 2.0,
+     "step": 0.01
+    }
+   },
+   "gain_g_offset": {
+    "type": "FLOAT",
+    "config": {
+     "default": 0.0,
+     "min": -2.0,
+     "max": 2.0,
+     "step": 0.01
+    }
+   },
+   "gain_b_offset": {
+    "type": "FLOAT",
+    "config": {
+     "default": 0.0,
+     "min": -2.0,
+     "max": 2.0,
+     "step": 0.01
+    }
+   },
+   "multiply": {
+    "type": "FLOAT",
+    "config": {
+     "default": 1.0,
+     "min": 0.01,
+     "max": 3.0,
+     "step": 0.01
+    }
+   },
+   "offset": {
+    "type": "FLOAT",
+    "config": {
+     "default": 0.0,
+     "min": -1.0,
+     "max": 1.0,
+     "step": 0.01
+    }
+   }
+  },
+  "inputs_optional": {
+   "mask": {
+    "type": "IMAGE",
+    "config": {}
+   }
+  },
+  "inputs_hidden": {}
+ },
+ "NukeKeymix": {
+  "class": "NukeKeymix",
+  "module": "merge_nodes",
+  "display_name": "Nuke Keymix",
+  "category": "Nuke/Merge",
+  "function": "keymix",
+  "return_types": [
+   "IMAGE"
+  ],
+  "return_names": null,
+  "output_node": false,
+  "has_is_changed": false,
+  "has_validate": false,
+  "doc": "Keymix - blend two images using a mask, matching Nuke's Keymix node.\n\n    Output formula:\n        result = A * mask + B * (1 - mask)\n\n    Where A is the foreground (mask=1 region) and B is the background\n    (mask=0 region). At each pixel the mask value is the alpha-style\n    blend ratio between A and B \u2014 so a soft mask gives a smooth\n    transition between the two images.\n\n    Differences from NukeMerge with a mask:\n      - NukeMerge does a blend OPERATION (over, multiply, screen, ...)\n        and the mask gates how much of that blended result replaces B.\n      - NukeKeymix does a pure linear interpolation between A and B\n        using the mask as the alpha. No blend operation.\n\n    A is resized to B's resolution if they differ (Nuke convention).\n    The mask is resized to match.",
+  "inputs_required": {
+   "A": {
+    "type": "IMAGE",
+    "config": {}
+   },
+   "B": {
+    "type": "IMAGE",
+    "config": {}
+   },
+   "mask": {
+    "type": "MASK",
+    "config": {}
+   },
+   "invert_mask": {
+    "type": "BOOLEAN",
+    "config": {
+     "default": false,
+     "tooltip": "Invert the mask (swap A and B at every pixel)."
+    }
+   },
+   "mix": {
+    "type": "FLOAT",
+    "config": {
+     "default": 1.0,
+     "min": 0.0,
+     "max": 1.0,
+     "step": 0.01,
+     "tooltip": "Overall opacity of the keymix. mix=0 returns B unchanged; mix=1 applies the full mask blend; intermediate values blend toward B."
+    }
+   }
+  },
+  "inputs_optional": {},
+  "inputs_hidden": {}
+ },
+ "NukeLevels": {
+  "class": "NukeLevels",
+  "module": "grade_nodes",
+  "display_name": "Nuke Levels",
+  "category": "Nuke/Color",
+  "function": "levels",
+  "return_types": [
+   "IMAGE"
+  ],
+  "return_names": null,
+  "output_node": false,
+  "has_is_changed": false,
+  "has_validate": false,
+  "doc": "Input/output levels adjustment similar to Nuke's ColorLookup node",
+  "inputs_required": {
+   "image": {
+    "type": "IMAGE",
+    "config": {}
+   },
+   "input_black": {
+    "type": "FLOAT",
+    "config": {
+     "default": 0.0,
+     "min": 0.0,
+     "max": 1.0,
+     "step": 0.01
+    }
+   },
+   "input_white": {
+    "type": "FLOAT",
+    "config": {
+     "default": 1.0,
+     "min": 0.0,
+     "max": 1.0,
+     "step": 0.01
+    }
+   },
+   "gamma": {
+    "type": "FLOAT",
+    "config": {
+     "default": 1.0,
+     "min": 0.1,
+     "max": 3.0,
+     "step": 0.01
+    }
+   },
+   "output_black": {
+    "type": "FLOAT",
+    "config": {
+     "default": 0.0,
+     "min": 0.0,
+     "max": 1.0,
+     "step": 0.01
+    }
+   },
+   "output_white": {
+    "type": "FLOAT",
+    "config": {
+     "default": 1.0,
+     "min": 0.0,
+     "max": 1.0,
+     "step": 0.01
+    }
+   },
+   "mix": {
+    "type": "FLOAT",
+    "config": {
+     "default": 1.0,
+     "min": 0.0,
+     "max": 1.0,
+     "step": 0.01
+    }
+   }
+  },
+  "inputs_optional": {},
+  "inputs_hidden": {}
+ },
+ "NukeMerge": {
+  "class": "NukeMerge",
+  "module": "merge_nodes",
+  "display_name": "Nuke Merge",
+  "category": "Nuke/Merge",
+  "function": "merge",
+  "return_types": [
+   "IMAGE"
+  ],
+  "return_names": null,
+  "output_node": false,
+  "has_is_changed": false,
+  "has_validate": false,
+  "doc": "Advanced merge node with multiple blend modes, matching Nuke's Merge node behavior.\n\n    A = Foreground (top layer)\n    B = Background (bottom layer)\n\n    For \"over\" operation: A is composited over B (A on top of B)",
+  "inputs_required": {
+   "A": {
+    "type": "IMAGE",
+    "config": {}
+   },
+   "B": {
+    "type": "IMAGE",
+    "config": {}
+   },
+   "operation": {
+    "type": [
+     "over",
+     "under",
+     "plus",
+     "minus",
+     "multiply",
+     "screen",
+     "overlay",
+     "soft_light",
+     "hard_light",
+     "color_dodge",
+     "color_burn",
+     "darken",
+     "lighten",
+     "difference",
+     "exclusion",
+     "average",
+     "divide",
+     "min",
+     "max",
+     "mask",
+     "stencil",
+     "matte",
+     "hypot",
+     "in",
+     "out",
+     "atop",
+     "xor",
+     "copy"
+    ],
+    "config": {
+     "default": "over"
+    }
+   },
+   "mix": {
+    "type": "FLOAT",
+    "config": {
+     "default": 1.0,
+     "min": 0.0,
+     "max": 1.0,
+     "step": 0.01
+    }
+   }
+  },
+  "inputs_optional": {
+   "mask": {
+    "type": "MASK",
+    "config": {}
+   }
+  },
+  "inputs_hidden": {}
+ },
+ "NukeMix": {
+  "class": "NukeMix",
+  "module": "merge_nodes",
+  "display_name": "Nuke Mix",
+  "category": "Nuke/Merge",
+  "function": "mix",
+  "return_types": [
+   "IMAGE"
+  ],
+  "return_names": null,
+  "output_node": false,
+  "has_is_changed": false,
+  "has_validate": false,
+  "doc": "Simple mix node for blending two images with a factor",
+  "inputs_required": {
+   "image_a": {
+    "type": "IMAGE",
+    "config": {}
+   },
+   "image_b": {
+    "type": "IMAGE",
+    "config": {}
+   },
+   "mix": {
+    "type": "FLOAT",
+    "config": {
+     "default": 0.5,
+     "min": 0.0,
+     "max": 1.0,
+     "step": 0.01
+    }
+   }
+  },
+  "inputs_optional": {},
+  "inputs_hidden": {}
+ },
+ "NukeMotionBlur": {
+  "class": "NukeMotionBlur",
+  "module": "blur_nodes",
+  "display_name": "Nuke Motion Blur",
+  "category": "Nuke/Filter",
+  "function": "motion_blur",
+  "return_types": [
+   "IMAGE"
+  ],
+  "return_names": null,
+  "output_node": false,
+  "has_is_changed": false,
+  "has_validate": false,
+  "doc": "Directional motion blur node",
+  "inputs_required": {
+   "image": {
+    "type": "IMAGE",
+    "config": {}
+   },
+   "distance": {
+    "type": "FLOAT",
+    "config": {
+     "default": 10.0,
+     "min": 0.0,
+     "max": 100.0,
+     "step": 0.1
+    }
+   },
+   "angle": {
+    "type": "FLOAT",
+    "config": {
+     "default": 0.0,
+     "min": -180.0,
+     "max": 180.0,
+     "step": 1.0
+    }
+   },
+   "samples": {
+    "type": "INT",
+    "config": {
+     "default": 8,
+     "min": 1,
+     "max": 32,
+     "step": 1
+    }
+   },
+   "shutter": {
+    "type": "FLOAT",
+    "config": {
+     "default": 0.5,
+     "min": 0.0,
+     "max": 1.0,
+     "step": 0.01
+    }
+   },
+   "center_bias": {
+    "type": "FLOAT",
+    "config": {
+     "default": 0.0,
+     "min": -1.0,
+     "max": 1.0,
+     "step": 0.01
+    }
+   },
+   "mix": {
+    "type": "FLOAT",
+    "config": {
+     "default": 1.0,
+     "min": 0.0,
+     "max": 1.0,
+     "step": 0.01
+    }
+   }
+  },
+  "inputs_optional": {},
+  "inputs_hidden": {}
+ },
+ "NukeOCIOColorSpace": {
+  "class": "NukeOCIOColorSpace",
+  "module": "colorspace_nodes",
+  "display_name": "Nuke OCIO ColorSpace",
+  "category": "Nuke/Color",
+  "function": "transform_colorspace",
+  "return_types": [
+   "IMAGE"
+  ],
+  "return_names": null,
+  "output_node": false,
+  "has_is_changed": false,
+  "has_validate": false,
+  "doc": "OCIO Color Space transformation node, similar to Nuke's OCIOColorSpace.\n\n    Transforms images between color spaces using OpenColorIO.\n    Supports ACES 2.0 (built-in) and custom OCIO configurations.\n\n    Requirements:\n        pip install opencolorio\n\n    OpenColorIO 2.5+ includes built-in ACES configs:\n    - ACES 2.0 CG Config (recommended for VFX/CG)\n    - ACES 2.0 Studio Config (full camera/display support)\n    - ACES 1.3 configs also available\n\n    No external config files needed!",
+  "inputs_required": {
+   "image": {
+    "type": "IMAGE",
+    "config": {}
+   },
+   "config": {
+    "type": [
+     "ACES 2.0 Studio Config"
+    ],
+    "config": {
+     "default": "ACES 2.0 Studio Config"
+    }
+   },
+   "in_colorspace": {
+    "type": [
+     "ACES2065-1",
+     "ACEScc",
+     "ACEScct",
+     "ACEScg",
+     "ADX10",
+     "ADX16",
+     "ARRI LogC3 (EI800)",
+     "ARRI LogC4",
+     "Apple Log",
+     "BMDFilm WideGamut Gen5",
+     "Camera Rec.709",
+     "CanonLog2 CinemaGamut D55",
+     "CanonLog3 CinemaGamut D55",
+     "D-Log D-Gamut",
+     "DaVinci Intermediate WideGamut",
+     "Display P3 - Display",
+     "Display P3 HDR - Display",
+     "Gamma 1.8 Encoded Rec.709",
+     "Gamma 2.2 Encoded AP1",
+     "Gamma 2.2 Encoded AdobeRGB",
+     "Gamma 2.2 Encoded Rec.709",
+     "Gamma 2.2 Rec.709 - Display",
+     "Gamma 2.4 Encoded Rec.709",
+     "Linear ARRI Wide Gamut 3",
+     "Linear ARRI Wide Gamut 4",
+     "Linear AdobeRGB",
+     "Linear BMD WideGamut Gen5",
+     "Linear CinemaGamut D55",
+     "Linear D-Gamut",
+     "Linear DaVinci WideGamut",
+     "Linear P3-D65",
+     "Linear REDWideGamutRGB",
+     "Linear Rec.2020",
+     "Linear Rec.709 (sRGB)",
+     "Linear S-Gamut3",
+     "Linear S-Gamut3.Cine",
+     "Linear V-Gamut",
+     "Linear Venice S-Gamut3",
+     "Linear Venice S-Gamut3.Cine",
+     "Log3G10 REDWideGamutRGB",
+     "P3-D65 - Display",
+     "Raw",
+     "Rec.1886 Rec.709 - Display",
+     "Rec.2100-HLG - Display",
+     "Rec.2100-PQ - Display",
+     "S-Log3 S-Gamut3",
+     "S-Log3 S-Gamut3.Cine",
+     "S-Log3 Venice S-Gamut3",
+     "S-Log3 Venice S-Gamut3.Cine",
+     "ST2084-P3-D65 - Display",
+     "V-Log V-Gamut",
+     "sRGB - Display",
+     "sRGB Encoded AP1",
+     "sRGB Encoded P3-D65",
+     "sRGB Encoded Rec.709 (sRGB)"
+    ],
+    "config": {
+     "default": "ACEScg"
+    }
+   },
+   "out_colorspace": {
+    "type": [
+     "ACES2065-1",
+     "ACEScc",
+     "ACEScct",
+     "ACEScg",
+     "ADX10",
+     "ADX16",
+     "ARRI LogC3 (EI800)",
+     "ARRI LogC4",
+     "Apple Log",
+     "BMDFilm WideGamut Gen5",
+     "Camera Rec.709",
+     "CanonLog2 CinemaGamut D55",
+     "CanonLog3 CinemaGamut D55",
+     "D-Log D-Gamut",
+     "DaVinci Intermediate WideGamut",
+     "Display P3 - Display",
+     "Display P3 HDR - Display",
+     "Gamma 1.8 Encoded Rec.709",
+     "Gamma 2.2 Encoded AP1",
+     "Gamma 2.2 Encoded AdobeRGB",
+     "Gamma 2.2 Encoded Rec.709",
+     "Gamma 2.2 Rec.709 - Display",
+     "Gamma 2.4 Encoded Rec.709",
+     "Linear ARRI Wide Gamut 3",
+     "Linear ARRI Wide Gamut 4",
+     "Linear AdobeRGB",
+     "Linear BMD WideGamut Gen5",
+     "Linear CinemaGamut D55",
+     "Linear D-Gamut",
+     "Linear DaVinci WideGamut",
+     "Linear P3-D65",
+     "Linear REDWideGamutRGB",
+     "Linear Rec.2020",
+     "Linear Rec.709 (sRGB)",
+     "Linear S-Gamut3",
+     "Linear S-Gamut3.Cine",
+     "Linear V-Gamut",
+     "Linear Venice S-Gamut3",
+     "Linear Venice S-Gamut3.Cine",
+     "Log3G10 REDWideGamutRGB",
+     "P3-D65 - Display",
+     "Raw",
+     "Rec.1886 Rec.709 - Display",
+     "Rec.2100-HLG - Display",
+     "Rec.2100-PQ - Display",
+     "S-Log3 S-Gamut3",
+     "S-Log3 S-Gamut3.Cine",
+     "S-Log3 Venice S-Gamut3",
+     "S-Log3 Venice S-Gamut3.Cine",
+     "ST2084-P3-D65 - Display",
+     "V-Log V-Gamut",
+     "sRGB - Display",
+     "sRGB Encoded AP1",
+     "sRGB Encoded P3-D65",
+     "sRGB Encoded Rec.709 (sRGB)"
+    ],
+    "config": {
+     "default": "sRGB Encoded Rec.709 (sRGB)"
+    }
+   }
+  },
+  "inputs_optional": {},
+  "inputs_hidden": {}
+ },
+ "NukeOCIODisplay": {
+  "class": "NukeOCIODisplay",
+  "module": "colorspace_nodes",
+  "display_name": "Nuke OCIO Display",
+  "category": "Nuke/Color",
+  "function": "apply_display",
+  "return_types": [
+   "IMAGE"
+  ],
+  "return_names": null,
+  "output_node": false,
+  "has_is_changed": false,
+  "has_validate": false,
+  "doc": "OCIO Display/View transformation node.\n\n    Applies a display transform (similar to Nuke's viewer process).\n    Useful for converting scene-referred images to display-referred for viewing.\n\n    Supports ACES 2.0 built-in configs (no external config files needed).\n\n    The 'invert' parameter allows round-tripping:\n    - forward: linear -> tonemapped (for viewing)\n    - inverse: tonemapped -> linear (to reverse a display transform)",
+  "inputs_required": {
+   "image": {
+    "type": "IMAGE",
+    "config": {}
+   },
+   "config": {
+    "type": [
+     "ACES 2.0 Studio Config"
+    ],
+    "config": {
+     "default": "ACES 2.0 Studio Config"
+    }
+   },
+   "display": {
+    "type": [
+     "sRGB - Display",
+     "Display P3 - Display",
+     "Display P3 HDR - Display",
+     "Gamma 2.2 Rec.709 - Display",
+     "P3-D65 - Display",
+     "Rec.1886 Rec.709 - Display",
+     "Rec.2100-HLG - Display",
+     "Rec.2100-PQ - Display",
+     "ST2084-P3-D65 - Display"
+    ],
+    "config": {
+     "default": "sRGB - Display"
+    }
+   },
+   "view": {
+    "type": [
+     "ACES 2.0 - SDR 100 nits (Rec.709)",
+     "Un-tone-mapped",
+     "Video (colorimetric)",
+     "Raw"
+    ],
+    "config": {
+     "default": "ACES 2.0 - SDR 100 nits (Rec.709)"
+    }
+   },
+   "input_colorspace": {
+    "type": [
+     "ACES2065-1",
+     "ACEScc",
+     "ACEScct",
+     "ACEScg",
+     "ADX10",
+     "ADX16",
+     "ARRI LogC3 (EI800)",
+     "ARRI LogC4",
+     "Apple Log",
+     "BMDFilm WideGamut Gen5",
+     "Camera Rec.709",
+     "CanonLog2 CinemaGamut D55",
+     "CanonLog3 CinemaGamut D55",
+     "D-Log D-Gamut",
+     "DaVinci Intermediate WideGamut",
+     "Display P3 - Display",
+     "Display P3 HDR - Display",
+     "Gamma 1.8 Encoded Rec.709",
+     "Gamma 2.2 Encoded AP1",
+     "Gamma 2.2 Encoded AdobeRGB",
+     "Gamma 2.2 Encoded Rec.709",
+     "Gamma 2.2 Rec.709 - Display",
+     "Gamma 2.4 Encoded Rec.709",
+     "Linear ARRI Wide Gamut 3",
+     "Linear ARRI Wide Gamut 4",
+     "Linear AdobeRGB",
+     "Linear BMD WideGamut Gen5",
+     "Linear CinemaGamut D55",
+     "Linear D-Gamut",
+     "Linear DaVinci WideGamut",
+     "Linear P3-D65",
+     "Linear REDWideGamutRGB",
+     "Linear Rec.2020",
+     "Linear Rec.709 (sRGB)",
+     "Linear S-Gamut3",
+     "Linear S-Gamut3.Cine",
+     "Linear V-Gamut",
+     "Linear Venice S-Gamut3",
+     "Linear Venice S-Gamut3.Cine",
+     "Log3G10 REDWideGamutRGB",
+     "P3-D65 - Display",
+     "Raw",
+     "Rec.1886 Rec.709 - Display",
+     "Rec.2100-HLG - Display",
+     "Rec.2100-PQ - Display",
+     "S-Log3 S-Gamut3",
+     "S-Log3 S-Gamut3.Cine",
+     "S-Log3 Venice S-Gamut3",
+     "S-Log3 Venice S-Gamut3.Cine",
+     "ST2084-P3-D65 - Display",
+     "V-Log V-Gamut",
+     "sRGB - Display",
+     "sRGB Encoded AP1",
+     "sRGB Encoded P3-D65",
+     "sRGB Encoded Rec.709 (sRGB)"
+    ],
+    "config": {
+     "default": "ACEScg"
+    }
+   },
+   "invert": {
+    "type": [
+     "forward",
+     "inverse"
+    ],
+    "config": {
+     "default": "forward"
+    }
+   }
+  },
+  "inputs_optional": {},
+  "inputs_hidden": {}
+ },
+ "NukeOCIOFileTransform": {
+  "class": "NukeOCIOFileTransform",
+  "module": "colorspace_nodes",
+  "display_name": "Nuke OCIO FileTransform",
+  "category": "Nuke/Color",
+  "function": "apply_file_transform",
+  "return_types": [
+   "IMAGE"
+  ],
+  "return_names": null,
+  "output_node": false,
+  "has_is_changed": true,
+  "has_validate": false,
+  "doc": "OCIO File Transform node - loads and applies LUT files via OpenColorIO.\n\n    Similar to Nuke's OCIOFileTransform node, this uses OCIO's FileTransform\n    to apply color transforms from LUT files. Supports forward and inverse\n    directions, multiple interpolation modes, and a mix slider.\n\n    Supported formats:\n    - .cube (Resolve, Adobe)\n    - .3dl (Autodesk Flame, Lustre)\n    - .csp (Cinespace)\n    - .spi1d / .spi3d / .spimtx (Sony Pictures Imageworks)\n    - .lut (Houdini)\n    - .cub (Truelight)\n    - .vf (Nuke)\n    - .ccc / .cc (ASC CDL)\n\n    Place LUT files in the 'luts' folder within the nuke-nodes package.",
+  "inputs_required": {
+   "image": {
+    "type": "IMAGE",
+    "config": {}
+   },
+   "lut_file": {
+    "type": [
+     "ailog_to_linear_4096_1d.cube",
+     "ailog_to_linear_65.cube"
+    ],
+    "config": {
+     "default": "ailog_to_linear_4096_1d.cube"
+    }
+   },
+   "direction": {
+    "type": [
+     "forward",
+     "inverse"
+    ],
+    "config": {
+     "default": "forward"
+    }
+   },
+   "interpolation": {
+    "type": [
+     "default",
+     "nearest",
+     "linear",
+     "tetrahedral",
+     "best"
+    ],
+    "config": {
+     "default": "default"
+    }
+   },
+   "mix": {
+    "type": "FLOAT",
+    "config": {
+     "default": 1.0,
+     "min": 0.0,
+     "max": 1.0,
+     "step": 0.01
+    }
+   }
+  },
+  "inputs_optional": {
+   "custom_lut_path": {
+    "type": "STRING",
+    "config": {
+     "default": "",
+     "multiline": false,
+     "placeholder": "Optional: absolute path to a LUT file"
+    }
+   }
+  },
+  "inputs_hidden": {}
+ },
+ "NukeOCIOInfo": {
+  "class": "NukeOCIOInfo",
+  "module": "colorspace_nodes",
+  "display_name": "Nuke OCIO Info",
+  "category": "Nuke/Color",
+  "function": "get_info",
+  "return_types": [
+   "STRING"
+  ],
+  "return_names": null,
+  "output_node": true,
+  "has_is_changed": false,
+  "has_validate": false,
+  "doc": "OCIO Info node - displays information about the current OCIO configuration.\n\n    Useful for debugging and understanding what color spaces are available.\n    Uses ACES 2.0 Studio Config with full camera support.",
+  "inputs_required": {},
+  "inputs_optional": {},
+  "inputs_hidden": {}
+ },
+ "NukeRamp": {
+  "class": "NukeRamp",
+  "module": "viewer_nodes",
+  "display_name": "Nuke Ramp",
+  "category": "Nuke/Viewer",
+  "function": "generate",
+  "return_types": [
+   "IMAGE"
+  ],
+  "return_names": null,
+  "output_node": false,
+  "has_is_changed": false,
+  "has_validate": false,
+  "doc": "Generate ramps and gradients for testing",
+  "inputs_required": {
+   "width": {
+    "type": "INT",
+    "config": {
+     "default": 512,
+     "min": 64,
+     "max": 4096,
+     "step": 1
+    }
+   },
+   "height": {
+    "type": "INT",
+    "config": {
+     "default": 512,
+     "min": 64,
+     "max": 4096,
+     "step": 1
+    }
+   },
+   "ramp_type": {
+    "type": [
+     "horizontal",
+     "vertical",
+     "radial",
+     "diagonal",
+     "checkerboard"
+    ],
+    "config": {
+     "default": "horizontal"
+    }
+   },
+   "color_start": {
+    "type": "STRING",
+    "config": {
+     "default": "0,0,0"
+    }
+   },
+   "color_end": {
+    "type": "STRING",
+    "config": {
+     "default": "1,1,1"
+    }
+   },
+   "invert": {
+    "type": "BOOLEAN",
+    "config": {
+     "default": false
+    }
+   },
+   "batch_size": {
+    "type": "INT",
+    "config": {
+     "default": 1,
+     "min": 1,
+     "max": 64,
+     "step": 1
+    }
+   }
+  },
+  "inputs_optional": {},
+  "inputs_hidden": {}
+ },
+ "NukeRead": {
+  "class": "NukeRead",
+  "module": "io_nodes",
+  "display_name": "Nuke Read",
+  "category": "Nuke/IO",
+  "function": "read_image",
+  "return_types": [
+   "IMAGE"
+  ],
+  "return_names": null,
+  "output_node": false,
+  "has_is_changed": true,
+  "has_validate": false,
+  "doc": "Read node - loads images or image sequences from disk.\n\n    Similar to Nuke's Read node, supports:\n    - Single images or image sequences\n    - Frame pattern matching (%04d, ####)\n    - Frame range specification (first/last frame)\n    - Wide format support via OpenImageIO\n    - Optional thumbnail preview\n\n    Supported formats: EXR, TIFF, PNG, JPEG, DPX, HDR, TGA, BMP, and more.",
+  "inputs_required": {
+   "file_path": {
+    "type": "STRING",
+    "config": {
+     "default": "",
+     "multiline": false,
+     "placeholder": "Path to image or sequence (e.g., /path/image.%04d.exr)"
+    }
+   },
+   "frame": {
+    "type": "INT",
+    "config": {
+     "default": 1,
+     "min": -999999,
+     "max": 999999,
+     "step": 1
+    }
+   }
+  },
+  "inputs_optional": {
+   "load_as_sequence": {
+    "type": "BOOLEAN",
+    "config": {
+     "default": true,
+     "tooltip": "Treat path as image sequence (enable for patterns like ####, %04d)"
+    }
+   },
+   "first_frame": {
+    "type": "INT",
+    "config": {
+     "default": 1,
+     "min": -999999,
+     "max": 999999,
+     "step": 1
+    }
+   },
+   "last_frame": {
+    "type": "INT",
+    "config": {
+     "default": 1,
+     "min": -999999,
+     "max": 999999,
+     "step": 1
+    }
+   },
+   "frame_mode": {
+    "type": [
+     "single",
+     "range",
+     "all"
+    ],
+    "config": {
+     "default": "single"
+    }
+   },
+   "missing_frames": {
+    "type": [
+     "error",
+     "black",
+     "hold",
+     "nearest"
+    ],
+    "config": {
+     "default": "black"
+    }
+   },
+   "colorspace": {
+    "type": [
+     "raw",
+     "sRGB",
+     "linear",
+     "ACEScg"
+    ],
+    "config": {
+     "default": "raw",
+     "tooltip": "Colorspace the FILE IS IN on disk (matches Nuke's Read node convention). The node decodes from this into linear Rec.709 working space.\n\n  raw    - no conversion (downstream nodes will handle decoding)\n  sRGB   - file is sRGB-encoded (PNG / JPG); apply IEC 61966-2-1 EOTF to decode -> linear Rec.709\n  linear - file is already linear Rec.709 (EXR); no conversion\n  ACEScg - file is linear ACEScg (AP1 primaries); apply no-CAT AP1 -> Rec.709 primary matrix (matches Nuke nuke-default; strict ACEScg is D60 but legacy mapping treats both as D65 for clean round-trips)"
+    }
+   },
+   "show_preview": {
+    "type": "BOOLEAN",
+    "config": {
+     "default": true,
+     "tooltip": "Show thumbnail preview in node"
+    }
+   }
+  },
+  "inputs_hidden": {}
+ },
+ "NukeReadInfo": {
+  "class": "NukeReadInfo",
+  "module": "io_nodes",
+  "display_name": "Nuke Read Info",
+  "category": "Nuke/IO",
+  "function": "get_info",
+  "return_types": [
+   "STRING"
+  ],
+  "return_names": null,
+  "output_node": true,
+  "has_is_changed": false,
+  "has_validate": false,
+  "doc": "Read Info node - displays information about an image file or sequence.\n\n    Shows: resolution, channels, bit depth, frame range, file size, etc.",
+  "inputs_required": {
+   "file_path": {
+    "type": "STRING",
+    "config": {
+     "default": "",
+     "multiline": false
+    }
+   }
+  },
+  "inputs_optional": {},
+  "inputs_hidden": {}
+ },
+ "NukeReadMultiPass": {
+  "class": "NukeReadMultiPass",
+  "module": "multipass_nodes",
+  "display_name": "Nuke Read MultiPass",
+  "category": "Nuke/IO",
+  "function": "read_multipass",
+  "return_types": [
+   "NUKE_PASSES",
+   "IMAGE",
+   "STRING"
+  ],
+  "return_names": [
+   "passes",
+   "beauty",
+   "pass_list"
+  ],
+  "output_node": false,
+  "has_is_changed": true,
+  "has_validate": false,
+  "doc": "Load all passes/layers from a multi-channel EXR.\n\n    Groups channels by layer name (e.g. diffuse, N, Z, crypto00) and outputs\n    them as a custom NUKE_PASSES bundle. Also outputs the beauty layer as a\n    standard IMAGE for preview and a pass list STRING for inspection.",
+  "inputs_required": {
+   "file_path": {
+    "type": "STRING",
+    "config": {
+     "default": "",
+     "multiline": false,
+     "placeholder": "Path to EXR (supports %04d / #### patterns)"
+    }
+   },
+   "frame": {
+    "type": "INT",
+    "config": {
+     "default": 1,
+     "min": -999999,
+     "max": 999999,
+     "step": 1
+    }
+   }
+  },
+  "inputs_optional": {
+   "load_as_sequence": {
+    "type": "BOOLEAN",
+    "config": {
+     "default": true,
+     "tooltip": "Expand %04d / #### patterns using the frame input"
+    }
+   },
+   "print_pass_list": {
+    "type": "BOOLEAN",
+    "config": {
+     "default": true,
+     "tooltip": "Print the pass list to the console when executed"
+    }
+   }
+  },
+  "inputs_hidden": {}
+ },
+ "NukeReformat": {
+  "class": "NukeReformat",
+  "module": "reformat_nodes",
+  "display_name": "Nuke Reformat",
+  "category": "Nuke/Transform",
+  "function": "reformat",
+  "return_types": [
+   "IMAGE"
+  ],
+  "return_names": null,
+  "output_node": false,
+  "has_is_changed": false,
+  "has_validate": true,
+  "doc": "Reformat node matching Nuke's Reformat node behavior.\n\n    Resizes and repositions the image onto a new output canvas defined by a\n    named format, an explicit box, or a scale factor \u2014 with pixel-aspect\n    aware resize modes (none/width/height/fit/fill/distort), orientation\n    controls (turn/flip/flop), centering, and black or replicated borders.",
+  "inputs_required": {
+   "image": {
+    "type": "IMAGE",
+    "config": {}
+   },
+   "type": {
+    "type": [
+     "to format",
+     "to box",
+     "scale"
+    ],
+    "config": {
+     "default": "to format"
+    }
+   },
+   "format": {
+    "type": [
+     "PAL",
+     "NTSC",
+     "PAL_16:9",
+     "NTSC_16:9",
+     "HD_720",
+     "HD_1080",
+     "UHD_4K",
+     "2K_DCP",
+     "4K_DCP",
+     "1K_Super_35(full-ap)",
+     "2K_Super_35(full-ap)",
+     "4K_Super_35(full-ap)",
+     "square_256",
+     "square_512",
+     "square_1K",
+     "square_2K",
+     "custom"
+    ],
+    "config": {
+     "default": "HD_1080"
+    }
+   },
+   "custom_width": {
+    "type": "INT",
+    "config": {
+     "default": 1920,
+     "min": 1,
+     "max": 16384,
+     "step": 1
+    }
+   },
+   "custom_height": {
+    "type": "INT",
+    "config": {
+     "default": 1080,
+     "min": 1,
+     "max": 16384,
+     "step": 1
+    }
+   },
+   "custom_pixel_aspect": {
+    "type": "FLOAT",
+    "config": {
+     "default": 1.0,
+     "min": 0.1,
+     "max": 10.0,
+     "step": 0.01
+    }
+   },
+   "save_format_as": {
+    "type": "STRING",
+    "config": {
+     "default": "",
+     "tooltip": "When format is 'custom' and this is non-empty, the custom width/height/pixel aspect are saved under this name and appear in the format dropdown after a frontend refresh."
+    }
+   },
+   "box_width": {
+    "type": "INT",
+    "config": {
+     "default": 1920,
+     "min": 1,
+     "max": 16384,
+     "step": 1
+    }
+   },
+   "box_height": {
+    "type": "INT",
+    "config": {
+     "default": 1080,
+     "min": 1,
+     "max": 16384,
+     "step": 1
+    }
+   },
+   "box_pixel_aspect": {
+    "type": "FLOAT",
+    "config": {
+     "default": 1.0,
+     "min": 0.1,
+     "max": 10.0,
+     "step": 0.01
+    }
+   },
+   "scale": {
+    "type": "FLOAT",
+    "config": {
+     "default": 1.0,
+     "min": 0.01,
+     "max": 100.0,
+     "step": 0.01
+    }
+   },
+   "resize_type": {
+    "type": [
+     "none",
+     "width",
+     "height",
+     "fit",
+     "fill",
+     "distort"
+    ],
+    "config": {
+     "default": "width"
+    }
+   },
+   "center": {
+    "type": "BOOLEAN",
+    "config": {
+     "default": true
+    }
+   },
+   "flip": {
+    "type": "BOOLEAN",
+    "config": {
+     "default": false
+    }
+   },
+   "flop": {
+    "type": "BOOLEAN",
+    "config": {
+     "default": false
+    }
+   },
+   "turn": {
+    "type": "BOOLEAN",
+    "config": {
+     "default": false
+    }
+   },
+   "filter": {
+    "type": [
+     "impulse",
+     "cubic",
+     "lanczos",
+     "area"
+    ],
+    "config": {
+     "default": "cubic"
+    }
+   },
+   "black_outside": {
+    "type": "BOOLEAN",
+    "config": {
+     "default": true
+    }
+   }
+  },
+  "inputs_optional": {
+   "input_pixel_aspect": {
+    "type": "FLOAT",
+    "config": {
+     "default": 1.0,
+     "min": 0.1,
+     "max": 10.0,
+     "step": 0.01,
+     "tooltip": "Pixel aspect ratio of the incoming image (1.0 = square pixels). ComfyUI images carry no format metadata, so declare it here when the source is anamorphic (e.g. PAL 1.09)."
+    }
+   }
+  },
+  "inputs_hidden": {}
+ },
+ "NukeShufflePass": {
+  "class": "NukeShufflePass",
+  "module": "multipass_nodes",
+  "display_name": "Nuke Shuffle Pass",
+  "category": "Nuke/IO",
+  "function": "shuffle",
+  "return_types": [
+   "IMAGE",
+   "STRING"
+  ],
+  "return_names": [
+   "image",
+   "info"
+  ],
+  "output_node": false,
+  "has_is_changed": false,
+  "has_validate": false,
+  "doc": "Pick a specific pass by name from a NUKE_PASSES bundle and output it as\n    a standard ComfyUI IMAGE.",
+  "inputs_required": {
+   "passes": {
+    "type": "NUKE_PASSES",
+    "config": {}
+   },
+   "pass_name": {
+    "type": "STRING",
+    "config": {
+     "default": "RGBA",
+     "multiline": false,
+     "placeholder": "e.g. RGBA, diffuse, N, Z, crypto00"
+    }
+   }
+  },
+  "inputs_optional": {
+   "channel_mode": {
+    "type": [
+     "auto",
+     "rgb",
+     "rgba",
+     "single_to_rgb"
+    ],
+    "config": {
+     "default": "auto",
+     "tooltip": "How to convert the pass to a 3/4-channel IMAGE:\n  auto: 1ch->gray, 2ch->pad, 3/4ch->as-is, 5+->first 4\n  rgb: force 3 channels\n  rgba: force 4 channels (add alpha=1)\n  single_to_rgb: always treat as grayscale"
+    }
+   },
+   "on_missing": {
+    "type": [
+     "black",
+     "error"
+    ],
+    "config": {
+     "default": "black",
+     "tooltip": "If the named pass is not found: return black or raise"
+    }
+   }
+  },
+  "inputs_hidden": {}
+ },
+ "NukeTransform": {
+  "class": "NukeTransform",
+  "module": "transform_nodes",
+  "display_name": "Nuke Transform",
+  "category": "Nuke/Transform",
+  "function": "transform",
+  "return_types": [
+   "IMAGE"
+  ],
+  "return_names": null,
+  "output_node": false,
+  "has_is_changed": false,
+  "has_validate": false,
+  "doc": "2D transformation node matching Nuke's Transform node behavior.\n\n    Parameters:\n    - translate: Slides the image along x/y axis (in pixels)\n    - rotate: Spins the image around the center point (in degrees, counter-clockwise)\n    - scale: Resizes the image (1.0 = original size)\n    - skew: Rotates pixel columns/rows around the center point (in degrees)\n    - center: The pivot point for rotation and scale (in pixels, or use center_mode)\n    - filter: Resampling filter algorithm\n    - invert: Inverts the transformation matrix",
+  "inputs_required": {
+   "image": {
+    "type": "IMAGE",
+    "config": {}
+   },
+   "translate_x": {
+    "type": "FLOAT",
+    "config": {
+     "default": 0.0,
+     "min": -4096.0,
+     "max": 4096.0,
+     "step": 1.0
+    }
+   },
+   "translate_y": {
+    "type": "FLOAT",
+    "config": {
+     "default": 0.0,
+     "min": -4096.0,
+     "max": 4096.0,
+     "step": 1.0
+    }
+   },
+   "rotate": {
+    "type": "FLOAT",
+    "config": {
+     "default": 0.0,
+     "min": -360.0,
+     "max": 360.0,
+     "step": 0.1
+    }
+   },
+   "scale": {
+    "type": "FLOAT",
+    "config": {
+     "default": 1.0,
+     "min": 0.001,
+     "max": 10.0,
+     "step": 0.01
+    }
+   },
+   "scale_x": {
+    "type": "FLOAT",
+    "config": {
+     "default": 1.0,
+     "min": 0.001,
+     "max": 10.0,
+     "step": 0.01
+    }
+   },
+   "scale_y": {
+    "type": "FLOAT",
+    "config": {
+     "default": 1.0,
+     "min": 0.001,
+     "max": 10.0,
+     "step": 0.01
+    }
+   },
+   "skew_x": {
+    "type": "FLOAT",
+    "config": {
+     "default": 0.0,
+     "min": -89.0,
+     "max": 89.0,
+     "step": 0.1
+    }
+   },
+   "skew_y": {
+    "type": "FLOAT",
+    "config": {
+     "default": 0.0,
+     "min": -89.0,
+     "max": 89.0,
+     "step": 0.1
+    }
+   },
+   "skew_order": {
+    "type": [
+     "XY",
+     "YX"
+    ],
+    "config": {
+     "default": "XY"
+    }
+   },
+   "center_x": {
+    "type": "FLOAT",
+    "config": {
+     "default": -1.0,
+     "min": -4096.0,
+     "max": 8192.0,
+     "step": 1.0
+    }
+   },
+   "center_y": {
+    "type": "FLOAT",
+    "config": {
+     "default": -1.0,
+     "min": -4096.0,
+     "max": 8192.0,
+     "step": 1.0
+    }
+   },
+   "filter": {
+    "type": [
+     "impulse",
+     "cubic",
+     "keys",
+     "simon",
+     "rifman",
+     "mitchell",
+     "parzen",
+     "notch",
+     "lanczos4",
+     "lanczos6",
+     "sinc4"
+    ],
+    "config": {
+     "default": "cubic"
+    }
+   },
+   "invert": {
+    "type": "BOOLEAN",
+    "config": {
+     "default": false
+    }
+   }
+  },
+  "inputs_optional": {},
+  "inputs_hidden": {}
+ },
+ "NukeVectorfield": {
+  "class": "NukeVectorfield",
+  "module": "vectorfield_nodes",
+  "display_name": "Nuke Vectorfield (LUT)",
+  "category": "Nuke/Color",
+  "function": "apply_lut",
+  "return_types": [
+   "IMAGE"
+  ],
+  "return_names": null,
+  "output_node": false,
+  "has_is_changed": true,
+  "has_validate": false,
+  "doc": "VectorField LUT node - loads and applies Look-Up Tables to images.\n\n    Similar to Nuke's Vectorfield node, this applies color transformations\n    defined by LUT files for color grading, technical transforms, and looks.\n\n    Supported formats:\n    - .cube (Resolve, Adobe, general purpose)\n    - .3dl (Autodesk Flame, Lustre)\n    - .spi1d / .spi3d (Sony Pictures Imageworks)\n\n    Place LUT files in the 'luts' folder within the nuke-nodes package.\n\n    Note: .cube files use red-fastest ordering, indexed as [B][G][R].",
+  "inputs_required": {
+   "image": {
+    "type": "IMAGE",
+    "config": {}
+   },
+   "lut_file": {
+    "type": [
+     "ailog_to_linear_4096_1d.cube",
+     "ailog_to_linear_65.cube"
+    ],
+    "config": {
+     "default": "ailog_to_linear_4096_1d.cube"
+    }
+   },
+   "intensity": {
+    "type": "FLOAT",
+    "config": {
+     "default": 1.0,
+     "min": 0.0,
+     "max": 2.0,
+     "step": 0.01
+    }
+   }
+  },
+  "inputs_optional": {
+   "custom_lut_path": {
+    "type": "STRING",
+    "config": {
+     "default": "",
+     "multiline": false,
+     "placeholder": "Optional: path to custom LUT file"
+    }
+   }
+  },
+  "inputs_hidden": {}
+ },
+ "NukeVectorfieldInfo": {
+  "class": "NukeVectorfieldInfo",
+  "module": "vectorfield_nodes",
+  "display_name": "Nuke Vectorfield Info",
+  "category": "Nuke/Color",
+  "function": "get_info",
+  "return_types": [
+   "STRING"
+  ],
+  "return_names": null,
+  "output_node": true,
+  "has_is_changed": false,
+  "has_validate": false,
+  "doc": "VectorField Info node - displays information about a LUT file.\n\n    Useful for debugging and understanding LUT properties.",
+  "inputs_required": {
+   "lut_file": {
+    "type": [
+     "ailog_to_linear_4096_1d.cube",
+     "ailog_to_linear_65.cube"
+    ],
+    "config": {
+     "default": "ailog_to_linear_4096_1d.cube"
+    }
+   }
+  },
+  "inputs_optional": {
+   "custom_lut_path": {
+    "type": "STRING",
+    "config": {
+     "default": "",
+     "multiline": false
+    }
+   }
+  },
+  "inputs_hidden": {}
+ },
+ "NukeViewer": {
+  "class": "NukeViewer",
+  "module": "viewer_nodes",
+  "display_name": "Nuke Viewer",
+  "category": "Nuke/Viewer",
+  "function": "view",
+  "return_types": [
+   "IMAGE"
+  ],
+  "return_names": null,
+  "output_node": false,
+  "has_is_changed": false,
+  "has_validate": false,
+  "doc": "Nuke-style viewer node with channel display options and shortcuts",
+  "inputs_required": {
+   "image": {
+    "type": "IMAGE",
+    "config": {}
+   },
+   "channel": {
+    "type": [
+     "rgba",
+     "rgb",
+     "red",
+     "green",
+     "blue",
+     "alpha",
+     "luminance"
+    ],
+    "config": {
+     "default": "rgba"
+    }
+   },
+   "gamma": {
+    "type": "FLOAT",
+    "config": {
+     "default": 1.0,
+     "min": 0.1,
+     "max": 3.0,
+     "step": 0.1
+    }
+   },
+   "gain": {
+    "type": "FLOAT",
+    "config": {
+     "default": 1.0,
+     "min": 0.1,
+     "max": 5.0,
+     "step": 0.1
+    }
+   },
+   "show_overlay": {
+    "type": "BOOLEAN",
+    "config": {
+     "default": false
+    }
+   },
+   "overlay_text": {
+    "type": "STRING",
+    "config": {
+     "default": ""
+    }
+   }
+  },
+  "inputs_optional": {
+   "mask": {
+    "type": "IMAGE",
+    "config": {}
+   }
+  },
+  "inputs_hidden": {}
+ },
+ "NukeWrite": {
+  "class": "NukeWrite",
+  "module": "io_nodes",
+  "display_name": "Nuke Write",
+  "category": "Nuke/IO",
+  "function": "write_image",
+  "return_types": [
+   "IMAGE",
+   "STRING"
+  ],
+  "return_names": [
+   "image",
+   "file_paths"
+  ],
+  "output_node": true,
+  "has_is_changed": false,
+  "has_validate": false,
+  "doc": "Write node - saves images or image sequences to disk.\n\n    Similar to Nuke's Write node, supports:\n    - Single images or image sequences\n    - Frame pattern matching (%04d, ####)\n    - Multiple file formats with format-specific options\n    - Bit depth control (8, 16, 16f, 32f)\n    - EXR compression options\n    - Optional thumbnail preview\n\n    Supported formats: EXR, TIFF, PNG, JPEG, DPX, HDR, TGA, BMP, and more.",
+  "inputs_required": {
+   "file_path": {
+    "type": "STRING",
+    "config": {
+     "default": "",
+     "multiline": false,
+     "placeholder": "Output path (e.g., output.%04d.exr or output.#### or output)"
+    }
+   },
+   "frame_start": {
+    "type": "INT",
+    "config": {
+     "default": 1,
+     "min": -999999,
+     "max": 999999,
+     "step": 1
+    }
+   }
+  },
+  "inputs_optional": {
+   "image": {
+    "type": "IMAGE",
+    "config": {
+     "tooltip": "Image input. Used when channels is 'rgb' or 'rgba'. Not needed when channels='all_channels'."
+    }
+   },
+   "channels": {
+    "type": [
+     "rgba",
+     "rgb",
+     "all_channels"
+    ],
+    "config": {
+     "default": "rgba",
+     "tooltip": "Channel layout for the output file:\n  rgba - write 4 channels (RGB + alpha). Uses the IMAGE input.\n  rgb - write 3 channels (RGB only). Uses the IMAGE input.\n  all_channels - write all passes as multi-channel EXR. Uses the PASSES input. Colorspace conversion is applied only to light passes, not to data passes (normal, depth, position, motion, IDs, mattes, UVs)."
+    }
+   },
+   "passes": {
+    "type": "NUKE_PASSES",
+    "config": {
+     "tooltip": "Multi-pass bundle from Nuke Read MultiPass. Used when channels='all_channels'."
+    }
+   },
+   "file_type": {
+    "type": [
+     "exr",
+     "tiff",
+     "png",
+     "jpg",
+     "dpx",
+     "hdr",
+     "tga",
+     "bmp",
+     "webp"
+    ],
+    "config": {
+     "default": "exr"
+    }
+   },
+   "bit_depth": {
+    "type": [
+     "8",
+     "16",
+     "16f",
+     "32f"
+    ],
+    "config": {
+     "default": "16f"
+    }
+   },
+   "compression": {
+    "type": [
+     "none",
+     "rle",
+     "zip",
+     "zips",
+     "piz",
+     "pxr24",
+     "b44",
+     "b44a",
+     "dwaa",
+     "dwab"
+    ],
+    "config": {
+     "default": "dwaa"
+    }
+   },
+   "frame_padding": {
+    "type": "INT",
+    "config": {
+     "default": 4,
+     "min": 1,
+     "max": 10,
+     "step": 1,
+     "tooltip": "Number of digits for frame numbers (e.g., 4 = 0001, 0002...)"
+    }
+   },
+   "overwrite": {
+    "type": "BOOLEAN",
+    "config": {
+     "default": false,
+     "tooltip": "True: overwrite existing files at the exact target paths (each frame is written atomically via a temp file + rename).\nFalse: never clobber - if any target frame already exists, the WHOLE sequence is written with a versioned base name (name_1.0001.exr, name_1.0002.exr, ...) so one render always shares one consistent name."
+    }
+   },
+   "create_directories": {
+    "type": "BOOLEAN",
+    "config": {
+     "default": true
+    }
+   },
+   "colorspace": {
+    "type": [
+     "raw",
+     "sRGB",
+     "linear",
+     "ACEScg"
+    ],
+    "config": {
+     "default": "raw",
+     "tooltip": "Colorspace to WRITE the file as on disk (matches Nuke's Write node convention). Input is assumed to be in linear Rec.709 working space; the node encodes from linear Rec.709 to the chosen output space.\n\n  raw    - write input as-is, no conversion\n  sRGB   - encode linear Rec.709 -> sRGB via IEC 61966-2-1 OETF (typical for PNG / JPG)\n  linear - write linear Rec.709, no conversion (typical for EXR)\n  ACEScg - encode Rec.709 -> ACEScg (AP1 primaries) via no-CAT primary matrix (matches Nuke nuke-default; strict ACEScg is D60 but legacy mapping treats both as D65 for clean round-trips)"
+    }
+   },
+   "show_preview": {
+    "type": "BOOLEAN",
+    "config": {
+     "default": true,
+     "tooltip": "Show thumbnail preview in node"
+    }
+   }
+  },
+  "inputs_hidden": {}
+ }
+}

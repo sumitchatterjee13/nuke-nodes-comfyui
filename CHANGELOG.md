@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.3.0] - 2026-08-20
+
+### Fixed
+
+- **NukeMotionBlur, NukeTransform, NukeCornerPin** now work on image batches larger than 1 frame (the sampling grid was built for a single frame and `grid_sample` raised a batch-size mismatch).
+
+### Added
+
+- `tools/verify_interfaces.py` + `tools/interface_manifest.json`: checks every node's ids, inputs (names, order, types, defaults, options), outputs and flags against a reference manifest - guards saved-workflow compatibility. `tools/smoke_test.py`: standalone functional regression test (no running ComfyUI needed).
+
 ## [1.2.0] - 2026-08-20
 
 ### Fixed

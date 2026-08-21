@@ -180,6 +180,8 @@ class NukeTransform(NukeNodeBase):
         else:
             mode = "bilinear"
 
+        # Grid is built for batch 1; expand it to the image batch size
+        grid = grid.expand(img_tensor.shape[0], -1, -1, -1)
         result = F.grid_sample(
             img_tensor, grid, mode=mode, padding_mode="zeros", align_corners=False
         )
@@ -402,6 +404,8 @@ class NukeCornerPin(NukeNodeBase):
 
         # Apply transformation with proper boundary handling for transparency
         mode = "nearest" if filter == "nearest" else "bilinear"
+        # Grid is built for batch 1; expand it to the image batch size
+        grid = grid.expand(img_tensor.shape[0], -1, -1, -1)
         result = F.grid_sample(
             img_tensor, grid, mode=mode, padding_mode="zeros", align_corners=False
         )

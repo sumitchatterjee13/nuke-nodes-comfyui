@@ -348,7 +348,8 @@ class NukeMotionBlur(NukeNodeBase):
                 offset_x, offset_y, height, width, img_tensor.device
             )
 
-            # Sample image
+            # Sample image (grid is built for batch 1; expand to the batch)
+            grid = grid.expand(img_tensor.shape[0], -1, -1, -1)
             sample = F.grid_sample(
                 img_tensor, grid, mode="bilinear", align_corners=False
             )
