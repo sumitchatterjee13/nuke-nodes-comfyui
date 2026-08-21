@@ -52,7 +52,13 @@ try:
 except ImportError:
     cv2 = None
 
-from .utils import NukeNodeBase, ensure_batch_dim, normalize_tensor
+from .utils import (
+    FILTER_NAMES,
+    NukeNodeBase,
+    _filter_flag,
+    ensure_batch_dim,
+    normalize_tensor,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -77,13 +83,9 @@ BUILTIN_FORMATS = {
     "square_2K": (2048, 2048, 1.0),
 }
 
-# Documented approximation of Nuke's filter set using OpenCV interpolators
-FILTER_MAP = {
-    "impulse": 0,  # cv2.INTER_NEAREST
-    "cubic": 2,  # cv2.INTER_CUBIC
-    "lanczos": 4,  # cv2.INTER_LANCZOS4
-    "area": 3,  # cv2.INTER_AREA
-}
+# The filter names and their OpenCV interpolators are defined once in
+# utils (FILTER_NAMES / _filter_flag) and shared with Transform/CornerPin.
+# Reformat keeps cv2.resize so "area" is a true area filter on downscales.
 
 
 def _user_formats_path():
@@ -264,10 +266,7 @@ class NukeReformat(NukeNodeBase):
                 "flip": ("BOOLEAN", {"default": False}),
                 "flop": ("BOOLEAN", {"default": False}),
                 "turn": ("BOOLEAN", {"default": False}),
-                "filter": (
-                    ["impulse", "cubic", "lanczos", "area"],
-                    {"default": "cubic"},
-                ),
+                "filter": (list(FILTER_NAMES), {"default": "cubic"}),
                 "black_outside": ("BOOLEAN", {"default": True}),
             },
             "optional": {
@@ -408,7 +407,7 @@ class NukeReformat(NukeNodeBase):
             new_w = max(1, _round_half_up(w_in * sx * (pa_in / pa_out)))
             new_h = max(1, _round_half_up(h_in * sy))
 
-        interpolation = FILTER_MAP.get(filter, FILTER_MAP["cubic"])
+        interpolation = _filter_flag(filter)
 
         out = np.zeros((batch, h_out, w_out, channels), dtype=np.float32)
         for i in range(batch):

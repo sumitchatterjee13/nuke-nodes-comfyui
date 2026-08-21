@@ -15,7 +15,6 @@ from .multipass_nodes import *
 from .reformat_nodes import *
 from .time_nodes import *
 from .transform_nodes import *
-from .vectorfield_nodes import *
 
 # Import version information
 from .version import (
@@ -54,10 +53,6 @@ from .time_nodes import NODE_CLASS_MAPPINGS as time_mappings
 from .time_nodes import NODE_DISPLAY_NAME_MAPPINGS as time_display_mappings
 from .transform_nodes import NODE_CLASS_MAPPINGS as transform_mappings
 from .transform_nodes import NODE_DISPLAY_NAME_MAPPINGS as transform_display_mappings
-from .vectorfield_nodes import NODE_CLASS_MAPPINGS as vectorfield_mappings
-from .vectorfield_nodes import (
-    NODE_DISPLAY_NAME_MAPPINGS as vectorfield_display_mappings,
-)
 from .viewer_nodes import NODE_CLASS_MAPPINGS as viewer_mappings
 from .viewer_nodes import NODE_DISPLAY_NAME_MAPPINGS as viewer_display_mappings
 
@@ -71,7 +66,6 @@ NODE_CLASS_MAPPINGS.update(multipass_mappings)
 NODE_CLASS_MAPPINGS.update(reformat_mappings)
 NODE_CLASS_MAPPINGS.update(time_mappings)
 NODE_CLASS_MAPPINGS.update(transform_mappings)
-NODE_CLASS_MAPPINGS.update(vectorfield_mappings)
 NODE_CLASS_MAPPINGS.update(viewer_mappings)
 
 NODE_DISPLAY_NAME_MAPPINGS.update(blur_display_mappings)
@@ -83,7 +77,6 @@ NODE_DISPLAY_NAME_MAPPINGS.update(multipass_display_mappings)
 NODE_DISPLAY_NAME_MAPPINGS.update(reformat_display_mappings)
 NODE_DISPLAY_NAME_MAPPINGS.update(time_display_mappings)
 NODE_DISPLAY_NAME_MAPPINGS.update(transform_display_mappings)
-NODE_DISPLAY_NAME_MAPPINGS.update(vectorfield_display_mappings)
 NODE_DISPLAY_NAME_MAPPINGS.update(viewer_display_mappings)
 
 __all__ = [

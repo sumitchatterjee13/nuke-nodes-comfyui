@@ -2,11 +2,14 @@
 Viewer and utility nodes that replicate Nuke's viewer functionality
 """
 
+import logging
+
 import numpy as np
 import torch
-import torch.nn.functional as F
 
-from .utils import NukeNodeBase, ensure_batch_dim, normalize_tensor
+from .utils import NukeNodeBase, ensure_batch_dim, mask_to_bhw1, normalize_tensor
+
+logger = logging.getLogger(__name__)
 
 
 class NukeViewer(NukeNodeBase):
@@ -35,7 +38,7 @@ class NukeViewer(NukeNodeBase):
                 "overlay_text": ("STRING", {"default": ""}),
             },
             "optional": {
-                "mask": ("IMAGE",),
+                "mask": ("MASK",),
             },
         }
 
@@ -99,20 +102,16 @@ class NukeViewer(NukeNodeBase):
 
         # Apply mask overlay if provided
         if mask is not None and show_overlay:
-            mask = ensure_batch_dim(mask)
-            if mask.shape[1:3] != result.shape[1:3]:
-                mask = F.interpolate(
-                    mask.permute(0, 3, 1, 2),
-                    size=result.shape[1:3],
-                    mode="bilinear",
-                    align_corners=False,
-                ).permute(0, 2, 3, 1)
-
             # Create mask overlay (red tint where mask is active)
-            mask_alpha = mask[:, :, :, :1]
-            overlay_color = torch.tensor([1.0, 0.0, 0.0], device=result.device).view(
-                1, 1, 1, 3
+            mask_alpha = mask_to_bhw1(
+                mask, result.shape[1], result.shape[2], result.device
+            ).to(result.dtype)
+            # Red tint on RGB; never touch an alpha channel (rgba mode)
+            channels = result.shape[3]
+            overlay_color = torch.zeros(
+                1, 1, 1, channels, device=result.device, dtype=result.dtype
             )
+            overlay_color[..., 0] = 1.0
             result = result + mask_alpha * overlay_color * 0.3
 
         return (normalize_tensor(result),)

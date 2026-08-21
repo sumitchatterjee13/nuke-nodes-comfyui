@@ -1,296 +1,156 @@
 # Nuke Nodes for ComfyUI
 
-A comprehensive collection of ComfyUI custom nodes that replicate the functionality of popular Nuke compositing nodes. This package brings professional compositing workflows to ComfyUI with nodes for merging, color grading, transformations, and blur effects.
+A collection of ComfyUI custom nodes that replicate Nuke compositing nodes: Read/Write with EXR image sequences, multi-pass EXR, Merge, Grade, OCIO colour management, Transform, Reformat, Blur, FrameHold and more. Version 2.x follows your `$OCIO` config like Nuke does.
+
+> **Upgrading from 1.x?** 2.0.0 is a major release with breaking changes (OCIO-driven colourspaces, `MASK` inputs, renamed/merged nodes). See [CHANGELOG.md](CHANGELOG.md) for the full list. 1.3.0 remains available on the Comfy Registry and as git tag `v1.3.0`.
 
 ## Features
 
-- **Read/Write Nodes**: Load and save images with full sequence support via OpenImageIO
-- **Merge Nodes**: Advanced blending operations with Porter-Duff and blend modes matching Nuke's Merge node
-- **Color Management**: ACES 2.0 and OCIO color space transformations with built-in configs
-- **LUT Support**: Load and apply 1D/3D LUTs for color grading (.cube, .3dl, .spi formats)
-- **Generate Nodes**: Create solid colors, ramps, and test patterns
-- **Grade Nodes**: Professional color correction and grading tools
-- **Transform Nodes**: Precise geometric transformations with filtering options
-- **Reformat Node**: Nuke-style Reformat with format presets, custom formats, and all resize types
-- **Time Nodes**: FrameHold for batch-as-timeline frame holding
-- **Blur Nodes**: Various blur algorithms including Gaussian, motion, and directional blur
+- **Read/Write**: image sequences via OpenImageIO (EXR, DPX, TIFF, PNG, JPEG, HDR, TGA, BMP, WebP). Bare-path sequence detection, Nuke-style frame numbering, atomic overwrite or whole-sequence versioning, multi-channel EXR in/out.
+- **Colour management**: OpenColorIO with your show config (`$OCIO`) or the built-in ACES 2.0 Studio config; colourspace, display/view and LUT (FileTransform) nodes; Read/Write convert to and from the config's working space.
+- **Merge**: Porter-Duff and blend modes matching Nuke's Merge, plus Dissolve, Keymix and Constant.
+- **Grade / ColorCorrect / Levels / Exposure**, all mask-aware.
+- **Transform / CornerPin / Crop / Reformat** with a shared, bit-exact resampler (impulse, cubic, lanczos, area).
+- **Blur / MotionBlur / Defocus**, **Viewer / ChannelShuffle / Ramp / ColorBars**, **FrameHold**.
 
 ## Installation
 
-1. Clone this repository into your ComfyUI custom nodes directory:
+Via ComfyUI Manager (search "Nuke Nodes"), or:
+
 ```bash
 cd ComfyUI/custom_nodes
 git clone https://github.com/sumitchatterjee13/nuke-nodes-comfyui.git nuke-nodes
-```
-
-2. Install the required dependencies:
-```bash
 cd nuke-nodes
 pip install -r requirements.txt
 ```
 
-3. Restart ComfyUI
+Restart ComfyUI. All nodes appear under the **Nuke** menu.
 
-## Node Categories
+### Requirements
 
-### Read/Write Nodes (IO)
+- **ComfyUI** (provides PyTorch / NumPy)
+- **OpenImageIO** (`>=2.5`) - required for all image I/O
+- **OpenColorIO** (`>=2.2`, 2.5+ recommended) - colour management; nodes load without it but pass images through
+- **OpenCV** (`opencv-python-headless`) - resampling for Transform / CornerPin / Reformat
 
-**OpenImageIO provides professional-grade image I/O with wide format support.**
+All three install from `requirements.txt` as prebuilt wheels.
 
-- **NukeRead**: Load images or image sequences from disk
-  - **file_path**: Path to image or sequence (supports `%04d` and `####` patterns — or just a bare path like `render.exr`: with *load_as_sequence* enabled the node auto-detects `render.0001.exr`-style sequences on disk, no padding token needed)
-  - **frame**: Current frame number to load
-  - **frame_mode**: single, range, or all frames
-  - **first_frame/last_frame**: Frame range specification
-  - **missing_frames**: How to handle missing frames
-    - `error`: Print error message
-    - `black`: Return black frame
-    - `hold`: Use previous frame
-    - `nearest`: Use nearest available frame
-  - **colorspace**: Basic colorspace conversion (raw, sRGB, linear, ACEScg)
-  - Supports: EXR, TIFF, PNG, JPEG, DPX, HDR, TGA, BMP, PSD, and many more
+## Colour management
 
-- **NukeWrite**: Save images or image sequences to disk
-  - **file_path**: Output path (supports `%04d` and `####` patterns)
-    - Relative paths: Saved to ComfyUI's output directory (e.g., `test1` → `output/test1.exr`)
-    - Subdirectories: Created automatically (e.g., `Test1/test1` → `output/Test1/test1.exr`)
-    - Absolute paths: Used as-is (e.g., `C:/renders/test1.exr`)
-  - **frame_start**: Starting frame number for sequences
-  - **file_type**: Output format (exr, tiff, png, jpg, dpx, hdr, tga, bmp)
-  - **bit_depth**: Output bit depth
-    - `8`: 8-bit unsigned integer
-    - `16`: 16-bit unsigned integer
-    - `16f`: 16-bit float (half)
-    - `32f`: 32-bit float
-  - **compression**: EXR compression type
-    - `none`, `rle`, `zip`, `zips`, `piz`, `pxr24`, `b44`, `b44a`, `dwaa`, `dwab`
-  - **frame_padding**: Number of digits for frame numbers (default: 4)
-    - `4` = 0001, 0002, 0003...
-    - `5` = 00001, 00002, 00003...
-  - **overwrite**: Controls what happens when target files already exist (default: false)
-    - `false` (safe): if **any** frame of the sequence exists, the whole batch is written under a versioned base name (`shot_1.0001.exr`, `shot_1.0002.exr`, ...) — one consistent name per run, nothing is ever clobbered
-    - `true`: frames replace existing files at their exact paths, written **atomically** (temp file + rename), so an interrupted render never leaves half-written frames; leftover frames from a previous longer render are warned about but never deleted
-  - **Frame naming**: when the path has no `%04d`/`####` pattern, frame numbers are appended Nuke-style with a dot: `name.0001.exr` (v1.0 used `name_0001.exr`)
-  - **create_directories**: Auto-create output directories
-  - **colorspace**: Apply colorspace conversion on write
+At startup the pack resolves its OCIO config in this order:
 
-- **NukeReadInfo**: Display information about image files
-  - Shows resolution, channels, bit depth, compression
-  - Detects sequences and shows frame range
-  - Reports missing frames in sequences
-  - Lists available I/O libraries
+1. **`$OCIO`** - if the environment variable points at a `.ocio` file (a show or studio config), it is used and every colour dropdown (colourspaces, roles, displays, views) is built from it.
+2. **Built-in ACES 2.0 Studio config** (`studio-config-v4.0.0_aces-v2.0_ocio-v2.5`) otherwise - works out of the box with 55 colourspaces including camera IDTs (ARRI, Sony, RED, Canon, Panasonic, Blackmagic, Apple, DJI).
 
-**Sequence Patterns:**
+The working space is the config's `scene_linear` role (ACEScg in the built-in config). Because dropdowns are built when ComfyUI starts, **changing `$OCIO` requires a ComfyUI restart** - the same model as launching Nuke from a show environment. `NukeOCIOInfo` reports which config is active.
 
-- `image.%04d.exr` - Printf style with padding (0001, 0002, ...)
-- `image.####.exr` - Hash padding (0001, 0002, ...)
-- `image.0001.exr` - Auto-detects sequence from single frame
-- `image.exr` - Bare path: auto-detects `image.0001.exr` / `image_0001.exr` / `image0001.exr` sequences in the same folder (read nodes, when *load_as_sequence* is on)
+## Nodes
 
-**I/O Library Priority:** OpenImageIO > OpenCV > PIL
+### Read/Write (`Nuke/IO`)
 
-- Install OpenImageIO for best format support: `pip install OpenImageIO`
+- **NukeRead** - load an image or sequence
+  - `file_path`: `%04d` / `####` patterns, a single frame (`shot.0001.exr`), or just the bare name (`shot.exr`) - with *load_as_sequence* on, siblings like `shot.0001.exr` / `shot_0001.exr` / `shot0001.exr` are detected automatically
+  - `frame`, `frame_mode` (single / range / all), `first_frame` / `last_frame`, `missing_frames` (error / black / hold / nearest)
+  - `colorspace`: `raw` (no conversion) or any colourspace of the active OCIO config - the file is converted *from* that space *into* the working space
+  - Thumbnail preview in the node; re-executes only when the files on disk change
+- **NukeWrite** - save an image or sequence (output node)
+  - Relative paths go under ComfyUI's `output/`; absolute paths are used as-is; directories are created
+  - Frames are numbered Nuke-style from `frame_start`: `name.0001.exr` (`frame_padding` digits); `%04d` / `####` in the path are honoured
+  - `overwrite` **off** (default): if any target frame exists the whole batch is written under a versioned base name (`name_1.0001.exr`, ...) - nothing is ever clobbered; **on**: frames replace existing files atomically (temp file + rename)
+  - `file_type`, `bit_depth` (8 / 16 / 16f / 32f), EXR `compression`, `colorspace` (working space -> chosen space), `channels` (rgb / rgba / all_channels for multi-pass EXR from a `NUKE_PASSES` input)
+- **NukeReadInfo** - resolution, channels, bit depth, sequence range, missing frames, I/O and colour library status
+- **NukeReadMultiPass** - load a multi-channel EXR into a `NUKE_PASSES` bundle + beauty image + pass list
+- **NukeShufflePass** - pick one pass from a `NUKE_PASSES` bundle as an image
 
-### Merge Nodes
-- **NukeMerge**: Multi-input merge node matching Nuke's Merge behavior
-  - **A** = Foreground (top layer)
-  - **B** = Background (bottom layer)
-  - **Porter-Duff operations**: over, under, in, out, atop, xor
-  - **Blend modes**: plus, minus, multiply, screen, overlay, soft_light, hard_light, color_dodge, color_burn, darken, lighten, difference, exclusion, average, divide, min, max, hypot
-  - **Matte operations**: mask, stencil, matte, copy
-  - **mix**: Controls the blend amount between B and the result
-  - **mask**: Optional mask input to limit the merge effect
-- **NukeMix**: Simple linear blend between two images with customizable mix factor
+### Merge (`Nuke/Merge`)
 
-### Generate Nodes
-- **NukeConstant**: Generate solid color images with configurable RGBA values, width, and height
+- **NukeMerge** - `A` (foreground) over `B` (background), 28 operations (see table below), `mix`, optional `mask`
+- **NukeDissolve** - `A` / `B` / `which` (0 = A, 1 = B)
+- **NukeKeymix** - A where `mask` is 1, B where 0, with invert and mix
+- **NukeConstant** (`Nuke/Generate`) - solid RGBA colour at any size
 
-### Color Nodes (OCIO)
+### Colour (`Nuke/Color`)
 
-**OpenColorIO 2.5+ with hardcoded ACES 2.0 Studio Config - reliable colorspaces every time!**
+- **NukeOCIOColorSpace** - `in_colorspace` -> `out_colorspace` from the active config (roles offered as `role:<name>`)
+- **NukeOCIODisplay** - display / view transform (Nuke's viewer process), forward or inverse
+- **NukeOCIOFileTransform** - apply a LUT file (`.cube`, `.3dl`, `.spi1d`, `.spi3d`, `.csp`, `.clf`, `.ctf`, `.cdl`) from the `luts/` folder or a custom path, with direction, interpolation and mix
+- **NukeOCIOInfo** - active config source, working space, colourspaces, roles, displays/views and LUT folder contents
+- **NukeGrade** - lift / gamma / gain with per-channel offsets, multiply, offset, optional `mask`
+- **NukeColorCorrect** - HSV hue / saturation / value + contrast, mix
+- **NukeLevels** - input / output black & white points, gamma, mix
+- **NukeExposure** - stops (with per-channel offsets), exposure type (stops / printer lights / film density), multiply, offset, preserve highlights, clamp, mix, optional `mask`
 
-#### 🎯 Using: ACES 2.0 Studio Config (Hardcoded)
-- **Config**: `studio-config-v4.0.0_aces-v2.0_ocio-v2.5`
-- **Total Colorspaces**: 55 (all hardcoded for reliability)
-- **No config path needed** - works out of the box!
+### Transform (`Nuke/Transform`)
 
-**Why Hardcoded?**
+- **NukeTransform** - translate, rotate (degrees, counter-clockwise), scale (uniform and per-axis), skew with XY/YX order, pivot (`-1` = centre), invert; filter `impulse` / `cubic` / `lanczos` / `area`. Identity parameters return the input bit-exactly. Output is RGBA with a coverage alpha.
+- **NukeCornerPin** - perspective warp mapping the four image corners to `to1..to4` (Nuke's bottom-left origin)
+- **NukeCrop** - crop with optional soft edge / reformat
+- **NukeReformat** - Nuke's Reformat: `to format` / `to box` / `scale`, resize type `none` / `width` / `height` / `fit` / `fill` / `distort` (pixel-aspect aware), 16 format presets plus your own saved formats (`custom` + *save_format_as*), center / flip / flop / turn, black outside, filter
 
-ComfyUI's architecture doesn't support dynamic population of dropdown menus based on runtime configurations. To provide the best user experience with maximum colorspace coverage, we've chosen ACES 2.0 Studio Config as the standard and hardcoded all 55 colorspace names directly into the node definitions. This approach offers several benefits:
+### Filter (`Nuke/Filter`)
 
-- ✅ **Immediate availability** - All colorspaces show up in dropdowns without configuration
-- ✅ **Consistent behavior** - Same colorspaces available across all installations
-- ✅ **Maximum coverage** - ACES 2.0 Studio includes comprehensive camera IDTs from all major manufacturers
-- ✅ **Professional workflow** - Industry-standard ACES 2.0 color pipeline
-- ✅ **No external files** - No need to manage OCIO config files or paths
+- **NukeBlur** - gaussian / box / triangle / quadratic, separate X/Y size, quality, crop, optional `mask`, mix
+- **NukeMotionBlur** - directional blur with shutter and centre bias
+- **NukeDefocus** - disk / hexagon / gaussian bokeh, optional `depth_map` (MASK) + focus distance
 
-- **NukeOCIOColorSpace**: Transform between color spaces using OpenColorIO
-  - **config**: Shows "ACES 2.0 Studio Config" (locked to this config)
-  - **in_colorspace/out_colorspace**: Choose from 55 hardcoded colorspaces
-  - Common workflow: ACEScg → sRGB Encoded Rec.709 (sRGB) for rendering
-  - Supports all ACES working spaces and camera IDTs
-  - Requires: `pip install opencolorio` (version 2.2+)
+### Viewer (`Nuke/Viewer`)
 
-- **NukeOCIODisplay**: Apply display/view transforms (like Nuke's viewer process)
-  - Convert scene-referred to display-referred images
-  - **config**: Shows "ACES 2.0 Studio Config" (locked to this config)
-  - **display**: sRGB - Display, Rec.1886 Rec.709 - Display, P3-D65 - Display, Rec.2100-PQ - Display, etc.
-  - **view**: ACES 2.0 - SDR Video, Raw, and more
-  - **input_colorspace**: Source color space (e.g., ACEScg)
+- **NukeViewer** - channel isolation (rgba / rgb / r / g / b / a / luminance), gamma, gain, optional red `mask` overlay
+- **NukeChannelShuffle** - route any of red / green / blue / alpha / zero / one into each output channel
+- **NukeRamp**, **NukeColorBars** - test pattern generators
 
-- **NukeOCIOInfo**: Display information about the current OCIO configuration
-  - Shows OCIO version and ACES 2.0 Studio Config details
-  - Lists all 55 hardcoded colorspaces
-  - Lists camera colorspaces with full manufacturer support
-  - Lists displays and views
-  - Useful for debugging OCIO setup
+### Time (`Nuke/Time`)
 
-**Available Camera Colorspaces** (hardcoded from ACES 2.0 Studio Config):
+- **NukeFrameHold** - the batch is the timeline (`frame_start` = frame number of item 0). `increment` = 0 holds `first_frame` everywhere; `increment` = N steps through `first`, `first+N`, ... exactly like Nuke.
 
-- **ARRI**: LogC3 (EI800), LogC4, Linear ARRI Wide Gamut 3/4
-- **Sony**: S-Log3 S-Gamut3, S-Log3 S-Gamut3.Cine, S-Log3 Venice S-Gamut3/Cine
-- **RED**: Log3G10 REDWideGamutRGB, Linear REDWideGamutRGB
-- **Canon**: CanonLog2/3 CinemaGamut D55, Linear CinemaGamut D55
-- **Panasonic**: V-Log V-Gamut, Linear V-Gamut
-- **Blackmagic**: BMDFilm WideGamut Gen5, DaVinci Intermediate WideGamut, Linear BMD WideGamut Gen5, Linear DaVinci WideGamut
-- **Apple**: Apple Log
-- **DJI**: D-Log D-Gamut, Linear D-Gamut
-
-**All 55 Hardcoded Colorspaces:**
-ACES2065-1, ACEScc, ACEScct, ACEScg, ADX10, ADX16, ARRI LogC3 (EI800), ARRI LogC4, Apple Log, BMDFilm WideGamut Gen5, Camera Rec.709, CanonLog2 CinemaGamut D55, CanonLog3 CinemaGamut D55, D-Log D-Gamut, DaVinci Intermediate WideGamut, Display P3 - Display, Display P3 HDR - Display, Gamma 1.8 Encoded Rec.709, Gamma 2.2 Encoded AP1, Gamma 2.2 Encoded AdobeRGB, Gamma 2.2 Encoded Rec.709, Gamma 2.2 Rec.709 - Display, Gamma 2.4 Encoded Rec.709, Linear ARRI Wide Gamut 3, Linear ARRI Wide Gamut 4, Linear AdobeRGB, Linear BMD WideGamut Gen5, Linear CinemaGamut D55, Linear D-Gamut, Linear DaVinci WideGamut, Linear P3-D65, Linear REDWideGamutRGB, Linear Rec.2020, Linear Rec.709 (sRGB), Linear S-Gamut3, Linear S-Gamut3.Cine, Linear V-Gamut, Linear Venice S-Gamut3, Linear Venice S-Gamut3.Cine, Log3G10 REDWideGamutRGB, P3-D65 - Display, Raw, Rec.1886 Rec.709 - Display, Rec.2100-HLG - Display, Rec.2100-PQ - Display, S-Log3 S-Gamut3, S-Log3 S-Gamut3.Cine, S-Log3 Venice S-Gamut3, S-Log3 Venice S-Gamut3.Cine, ST2084-P3-D65 - Display, V-Log V-Gamut, sRGB - Display, sRGB Encoded AP1, sRGB Encoded P3-D65, sRGB Encoded Rec.709 (sRGB)
-
-### LUT Nodes (Vectorfield)
-
-- **NukeVectorfield**: Load and apply Look-Up Tables (LUTs) for color grading
-  - **Supported formats**: .cube, .3dl, .spi1d, .spi3d, .lut
-  - **lut_file**: Select from available LUTs in `./luts` folder
-  - **intensity**: Mix amount (0-2.0 range)
-    - 0.0 = original image
-    - 1.0 = full LUT effect
-    - >1.0 = extrapolated LUT effect
-  - **custom_lut_path**: Optional path to LUT file outside luts folder
-  - Automatic LUT caching for performance
-  - Supports both 1D and 3D LUTs with trilinear interpolation
-  - HDR compatible (values > 1.0)
-
-- **NukeVectorfieldInfo**: Display LUT file information
-  - Shows title, type (1D/3D), size, domain
-  - Data range and entry count
-  - Lists available LUTs in luts folder
-
-**Using LUTs:**
-
-1. Place your LUT files (.cube, .3dl, etc.) in the `luts` folder
-2. Add Vectorfield node to your workflow
-3. Select LUT from dropdown or provide custom path
-4. Adjust intensity to taste
-
-### Grade Nodes
-- **NukeGrade**: Professional color grading with lift, gamma, gain controls
-- **NukeColorCorrect**: HSV-based color correction
-- **NukeLevels**: Input/output levels adjustment
-
-### Transform Nodes
-- **NukeTransform**: 2D transformation matching Nuke's Transform node
-  - **translate_x/y**: Move image in pixels
-  - **rotate**: Counter-clockwise rotation in degrees
-  - **scale**: Uniform scale multiplier
-  - **scale_x/y**: Non-uniform scale
-  - **skew_x/y**: Skew transformation in degrees
-  - **skew_order**: XY or YX application order
-  - **center_x/y**: Pivot point in pixels (-1 = image center)
-  - **filter**: impulse, cubic (default), keys, simon, rifman, mitchell, parzen, notch, lanczos4, lanczos6, sinc4
-  - **invert**: Invert the transformation matrix
-- **NukeCornerPin**: Four-corner distortion for perspective correction
-- **NukeCrop**: Precise cropping with soft edges
-- **NukeReformat**: Full port of Nuke's Reformat node
-  - **type**: `to format` (pick a format preset), `to box` (explicit width/height/pixel aspect), or `scale` (multiply input size)
-  - **format**: 16 standard Nuke formats (HD_1080, UHD_4K, 2K_DCP, 4K_DCP, 2K/4K_Super_35, PAL, NTSC, squares, ...) plus your own saved formats
-  - **Custom formats**: choose `custom`, set width/height/pixel aspect, and optionally enter a name in **save_format_as** — the format is persisted (JSON in the ComfyUI user directory) and appears in the dropdown afterwards, like Nuke's "new..." format
-  - **resize_type**: `none`, `width`, `height`, `fit`, `fill`, `distort` — pixel-aspect-aware math matching Nuke's behavior
-  - **center / flip / flop / turn**: placement and orientation controls (turn = 90° CCW)
-  - **black_outside**: pad with black, or replicate edge pixels when off
-  - **filter**: impulse, cubic, lanczos, area
-  - **input_pixel_aspect**: pixel aspect of the incoming image (default 1.0; ComfyUI tensors carry no PA metadata, so set this when your source is anamorphic/PAL/NTSC)
-
-### Time Nodes
-- **NukeFrameHold**: Hold a frame across the batch, matching Nuke's FrameHold
-  - Treats the image batch as a timeline: **frame_start** is the frame number of the first batch item
-  - **first_frame**: the frame to hold; with **increment** = 0 every output frame shows *first_frame*
-  - **increment** = N: output steps through held frames *first, first+N, first+2N, ...* (e.g. first_frame=1, increment=5 over frames 1-15 → 1,1,1,1,1,6,6,6,6,6,11,11,11,11,11)
-  - Output batch has the same length as the input; out-of-range holds clamp to the available frames
-
-### Blur Nodes
-- **NukeBlur**: Gaussian blur with separate X/Y controls
-- **NukeMotionBlur**: Directional motion blur
-- **NukeDefocus**: Depth-of-field style blur
-
-### Viewer Nodes
-- **NukeViewer**: Channel viewer with R/G/B/A shortcuts and gamma/gain controls
-- **NukeChannelShuffle**: Rearrange and swap RGBA channels
-- **NukeRamp**: Generate test ramps and gradients
-- **NukeColorBars**: Generate standard color bar patterns
-
-## Merge Operations Reference
+## Merge operations
 
 | Operation | Description |
 |-----------|-------------|
-| **over** | A composited over B (A on top of B) |
-| **under** | A under B (equivalent to B over A) |
-| **plus** | Additive blend: A + B |
-| **minus** | Subtractive blend: B - A |
-| **multiply** | Darkening blend: A × B |
-| **screen** | Lightening blend: 1 - (1-A)(1-B) |
-| **overlay** | Contrast blend combining multiply and screen |
-| **soft_light** | Gentle contrast adjustment |
-| **hard_light** | Strong contrast adjustment |
-| **color_dodge** | Brightens B based on A |
-| **color_burn** | Darkens B based on A |
-| **darken** | min(A, B) |
-| **lighten** | max(A, B) |
+| **over** | A composited over B |
+| **under** | A under B (B over A) |
+| **plus** | A + B |
+| **minus** | B - A |
+| **multiply** | A × B |
+| **screen** | 1 - (1-A)(1-B) |
+| **overlay** | contrast blend of multiply and screen |
+| **soft_light** / **hard_light** | gentle / strong contrast |
+| **color_dodge** / **color_burn** | brighten / darken B by A |
+| **darken** / **lighten** | min(A, B) / max(A, B) |
 | **difference** | \|A - B\| |
-| **exclusion** | A + B - 2×A×B |
+| **exclusion** | A + B - 2AB |
 | **average** | (A + B) / 2 |
 | **divide** | B / A |
-| **min** | Minimum of A and B |
-| **max** | Maximum of A and B |
+| **min** / **max** | minimum / maximum |
 | **hypot** | sqrt(A² + B²) |
-| **in** | A masked by B's alpha |
-| **out** | A where B is transparent |
+| **in** / **out** | A masked by B's alpha / A where B is transparent |
 | **atop** | A where B exists, B elsewhere |
 | **xor** | A and B where they don't overlap |
-| **mask** | A with alpha = Aα × Bα |
-| **stencil** | A where B is transparent |
+| **mask** / **stencil** | A with alpha Aα×Bα / A where B is transparent |
 | **matte** | B with A's alpha as matte |
-| **copy** | Just A |
+| **copy** | A |
 
-## Usage
+## Conventions
 
-All nodes appear in the ComfyUI node menu under the "Nuke" category. Each node is designed to match the behavior and parameters of its Nuke counterpart as closely as possible.
+- Images are ComfyUI `IMAGE` tensors (`[B,H,W,C]`, 0..1). Nodes accept RGB or RGBA and preserve alpha; Transform/CornerPin output RGBA (coverage alpha).
+- Mask-type inputs take ComfyUI `MASK` tensors.
+- File-reading nodes cache on the files' modification time and size, so they re-run only when the files change.
 
-## Requirements
+## Development
 
-- **ComfyUI** (provides PyTorch automatically)
-- **OpenCV** (may need separate installation: `pip install opencv-python`)
-- **NumPy** (usually included with PyTorch)
-- **OpenImageIO** (optional, for Read/Write nodes: `pip install OpenImageIO`)
-  - Required for NukeRead, NukeWrite, and NukeReadInfo nodes
-  - Provides professional-grade image I/O with wide format support (EXR, DPX, etc.)
-  - Falls back to OpenCV or PIL if not available
-- **OpenColorIO** (optional, for OCIO color management: `pip install opencolorio`)
-  - Required for NukeOCIOColorSpace, NukeOCIODisplay, and NukeOCIOInfo nodes
-  - Version 2.5+ recommended for built-in ACES 2.0 support
+```bash
+python -m pytest tests          # functional + interface tests (no running ComfyUI needed)
+python tools/smoke_test.py      # quick standalone gate
+python tools/verify_interfaces.py   # node interfaces vs tools/interface_manifest.json
+python tools/dump_manifest.py   # regenerate the manifest after an INTENDED interface change
+```
 
-
-## Contributing
-
-Contributions are welcome! Please feel free to submit pull requests or open issues for bug reports and feature requests.
+The interface manifest guards saved-workflow compatibility: any change to node ids, input names/order/types/defaults or outputs fails `verify_interfaces.py` until the manifest is regenerated deliberately.
 
 ## License
 
-This project is licensed under the MIT License - see the LICENSE file for details.
+MIT - see [LICENSE](LICENSE).
 
 ## Acknowledgments
 
-- Inspired by The Foundry's Nuke compositing software
-- Built for the ComfyUI community
+Inspired by The Foundry's Nuke. Built for the ComfyUI community.

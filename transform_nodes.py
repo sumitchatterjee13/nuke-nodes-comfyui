@@ -10,15 +10,50 @@ Nuke's Transform node applies transformations in this order:
 
 Rotation is measured in degrees, counter-clockwise.
 Center is specified in pixel coordinates (Nuke default is image center).
+
+Resampling goes through ``utils.remap_image``: for every OUTPUT pixel centre
+(x + 0.5, y + 0.5) the inverse transform gives the SOURCE coordinate to sample,
+in pixel units with centres at +0.5. An identity transform therefore
+reproduces the input bit-exactly (no half-pixel drift).
 """
 
+import logging
 import math
 
 import numpy as np
 import torch
-import torch.nn.functional as F
 
-from .utils import NukeNodeBase, ensure_batch_dim, normalize_tensor
+from .utils import (
+    FILTER_NAMES,
+    NukeNodeBase,
+    ensure_batch_dim,
+    identity_maps,
+    normalize_tensor,
+    remap_image,
+)
+
+logger = logging.getLogger(__name__)
+
+
+def _to_rgba_numpy(img):
+    """[B,H,W,3|4] tensor -> contiguous float32 [B,H,W,4] array (alpha = 1 if absent)."""
+    arr = img.detach().cpu().numpy().astype(np.float32, copy=False)
+    if arr.shape[3] == 3:
+        alpha = np.ones(arr.shape[:3] + (1,), dtype=np.float32)
+        arr = np.concatenate([arr, alpha], axis=3)
+    elif arr.shape[3] > 4:
+        arr = arr[:, :, :, :4]
+    return np.ascontiguousarray(arr)
+
+
+def _remap_batch(arr, map_x, map_y, filter_name):
+    """Resample every item of a [B,H,W,C] array through the same source maps."""
+    out = np.empty(
+        (arr.shape[0], map_x.shape[0], map_x.shape[1], arr.shape[3]), dtype=np.float32
+    )
+    for i in range(arr.shape[0]):
+        out[i] = remap_image(arr[i], map_x, map_y, filter_name, black_outside=True)
+    return out
 
 
 class NukeTransform(NukeNodeBase):
@@ -81,22 +116,7 @@ class NukeTransform(NukeNodeBase):
                     "FLOAT",
                     {"default": -1.0, "min": -4096.0, "max": 8192.0, "step": 1.0},
                 ),
-                "filter": (
-                    [
-                        "impulse",
-                        "cubic",
-                        "keys",
-                        "simon",
-                        "rifman",
-                        "mitchell",
-                        "parzen",
-                        "notch",
-                        "lanczos4",
-                        "lanczos6",
-                        "sinc4",
-                    ],
-                    {"default": "cubic"},
-                ),
+                "filter": (list(FILTER_NAMES), {"default": "cubic"}),
                 "invert": ("BOOLEAN", {"default": False}),
             }
         }
@@ -127,6 +147,8 @@ class NukeTransform(NukeNodeBase):
 
         Rotation is counter-clockwise in degrees.
         Center defaults to image center if set to -1.
+        Output is always RGBA; the alpha channel carries the coverage of the
+        transformed image (1 inside, 0 outside).
         """
         img = ensure_batch_dim(image)
         batch_size, height, width, channels = img.shape
@@ -139,19 +161,8 @@ class NukeTransform(NukeNodeBase):
         final_scale_x = scale * scale_x
         final_scale_y = scale * scale_y
 
-        # Ensure we have RGBA channels for proper transparency
-        if channels == 3:
-            alpha = torch.ones(
-                batch_size, height, width, 1, device=img.device, dtype=img.dtype
-            )
-            img = torch.cat([img, alpha], dim=3)
-            channels = 4
-
-        # Convert to tensor format for grid_sample (B, C, H, W)
-        img_tensor = img.permute(0, 3, 1, 2)
-
-        # Calculate transformation matrix
-        transform_matrix = self._create_transform_matrix(
+        # Forward matrix: source pixel coordinate -> output pixel coordinate
+        matrix = self._create_transform_matrix(
             translate_x,
             translate_y,
             rotate,
@@ -167,28 +178,12 @@ class NukeTransform(NukeNodeBase):
             invert,
         )
 
-        # Create sampling grid
-        grid = self._create_sampling_grid(
-            transform_matrix, height, width, img.device, invert
-        )
+        map_x, map_y = self._source_maps(matrix, height, width)
 
-        # Apply transformation with proper filter
-        # PyTorch grid_sample only supports nearest and bilinear
-        # For higher quality filters, we implement custom resampling
-        if filter == "impulse":
-            mode = "nearest"
-        else:
-            mode = "bilinear"
+        arr = _to_rgba_numpy(img)
+        out = _remap_batch(arr, map_x, map_y, filter)
 
-        # Grid is built for batch 1; expand it to the image batch size
-        grid = grid.expand(img_tensor.shape[0], -1, -1, -1)
-        result = F.grid_sample(
-            img_tensor, grid, mode=mode, padding_mode="zeros", align_corners=False
-        )
-
-        # Convert back to ComfyUI format (B, H, W, C)
-        result = result.permute(0, 2, 3, 1)
-
+        result = torch.from_numpy(out).to(img.device)
         return (normalize_tensor(result),)
 
     def _create_transform_matrix(
@@ -208,7 +203,7 @@ class NukeTransform(NukeNodeBase):
         invert,
     ):
         """
-        Create 2D transformation matrix matching Nuke's order:
+        Create the forward 3x3 transformation matrix matching Nuke's order:
         1. Translate to center
         2. Scale
         3. Skew (in specified order)
@@ -221,19 +216,17 @@ class NukeTransform(NukeNodeBase):
         skew_y_rad = math.radians(sky)
 
         # Translation to center (move center to origin)
-        T1 = torch.tensor([[1, 0, -cx], [0, 1, -cy], [0, 0, 1]], dtype=torch.float32)
+        T1 = np.array([[1, 0, -cx], [0, 1, -cy], [0, 0, 1]], dtype=np.float64)
 
         # Scale matrix
-        S = torch.tensor([[sx, 0, 0], [0, sy, 0], [0, 0, 1]], dtype=torch.float32)
+        S = np.array([[sx, 0, 0], [0, sy, 0], [0, 0, 1]], dtype=np.float64)
 
         # Skew matrices
-        SKX = torch.tensor(
-            [[1, math.tan(skew_x_rad), 0], [0, 1, 0], [0, 0, 1]],
-            dtype=torch.float32,
+        SKX = np.array(
+            [[1, math.tan(skew_x_rad), 0], [0, 1, 0], [0, 0, 1]], dtype=np.float64
         )
-        SKY = torch.tensor(
-            [[1, 0, 0], [math.tan(skew_y_rad), 1, 0], [0, 0, 1]],
-            dtype=torch.float32,
+        SKY = np.array(
+            [[1, 0, 0], [math.tan(skew_y_rad), 1, 0], [0, 0, 1]], dtype=np.float64
         )
 
         # Combined skew based on order
@@ -242,79 +235,65 @@ class NukeTransform(NukeNodeBase):
         else:
             SK = SKX @ SKY  # Apply Y first, then X
 
-        # Rotation matrix (counter-clockwise)
+        # Rotation matrix: positive degrees rotate COUNTER-clockwise on screen
+        # (Nuke convention). Image coordinates are y-down, so the standard
+        # [[cos,-sin],[sin,cos]] form would appear clockwise - hence the
+        # sign flip on sin.
         cos_r, sin_r = math.cos(rotate_rad), math.sin(rotate_rad)
-        R = torch.tensor(
-            [[cos_r, -sin_r, 0], [sin_r, cos_r, 0], [0, 0, 1]], dtype=torch.float32
+        R = np.array(
+            [[cos_r, sin_r, 0], [-sin_r, cos_r, 0], [0, 0, 1]], dtype=np.float64
         )
 
         # Translation back from center + user translation
         # Note: In Nuke, positive Y translation moves the image up
         # In image coordinates (top-left origin), we need to negate Y
-        T2 = torch.tensor(
-            [[1, 0, cx + tx], [0, 1, cy - ty], [0, 0, 1]],
-            dtype=torch.float32,
-        )
+        T2 = np.array([[1, 0, cx + tx], [0, 1, cy - ty], [0, 0, 1]], dtype=np.float64)
 
         # Combine transformations in Nuke's order:
         # T2 * R * SK * S * T1
         matrix = T2 @ R @ SK @ S @ T1
 
         if invert:
-            matrix = torch.inverse(matrix)
+            matrix = self._safe_inverse(matrix, "invert")
 
-        return matrix[:2, :3]  # Return 2x3 matrix
+        return matrix
 
-    def _create_sampling_grid(self, transform_matrix, height, width, device, invert):
-        """Create sampling grid for grid_sample"""
-        # Create coordinate grid
-        y_coords = torch.linspace(-1, 1, height, device=device)
-        x_coords = torch.linspace(-1, 1, width, device=device)
-        y_grid, x_grid = torch.meshgrid(y_coords, x_coords, indexing="ij")
-
-        # Convert to homogeneous coordinates
-        ones = torch.ones_like(x_grid)
-        coords = torch.stack([x_grid, y_grid, ones], dim=2).reshape(-1, 3)
-
-        # Convert normalized coordinates to pixel coordinates
-        coords[:, 0] = (coords[:, 0] + 1) * width / 2
-        coords[:, 1] = (coords[:, 1] + 1) * height / 2
-
-        # For grid_sample, we need the inverse transformation
-        # (where to sample FROM for each output pixel)
-        transform_matrix = transform_matrix.to(device)
-
-        # Build full 3x3 matrix for inversion
-        full_matrix = torch.cat(
-            [
-                transform_matrix,
-                torch.tensor([[0, 0, 1]], device=device, dtype=torch.float32),
-            ],
-            dim=0,
-        )
-
+    @staticmethod
+    def _safe_inverse(matrix, what):
         try:
-            inv_matrix = torch.inverse(full_matrix)[:2, :3]
-        except RuntimeError:
-            # Fallback if matrix is singular
-            inv_matrix = transform_matrix
+            return np.linalg.inv(matrix)
+        except np.linalg.LinAlgError:
+            logger.warning(
+                f"[NukeTransform] Singular transform matrix ({what}); "
+                f"falling back to the un-inverted matrix"
+            )
+            return matrix
 
-        # Transform coordinates
-        transformed_coords = torch.mm(coords, inv_matrix.t())
+    def _source_maps(self, matrix, height, width):
+        """Source-coordinate maps (pixel units, centres at +0.5) for remap_image.
 
-        # Convert back to normalized coordinates
-        transformed_coords[:, 0] = transformed_coords[:, 0] * 2 / width - 1
-        transformed_coords[:, 1] = transformed_coords[:, 1] * 2 / height - 1
-
-        # Reshape to grid format
-        grid = transformed_coords[:, :2].reshape(1, height, width, 2)
-
-        return grid
+        For each output pixel centre, apply the inverse of the forward matrix
+        to find where in the source to sample.
+        """
+        inv = self._safe_inverse(matrix, "sampling")
+        xs, ys = identity_maps(height, width)  # output pixel centres
+        xs64 = xs.astype(np.float64)
+        ys64 = ys.astype(np.float64)
+        src_x = inv[0, 0] * xs64 + inv[0, 1] * ys64 + inv[0, 2]
+        src_y = inv[1, 0] * xs64 + inv[1, 1] * ys64 + inv[1, 2]
+        return src_x.astype(np.float32), src_y.astype(np.float32)
 
 
 class NukeCornerPin(NukeNodeBase):
     """
-    Four-corner perspective transformation node with proper transparency
+    Four-corner perspective transformation node with proper transparency.
+
+    The four source image corners are pinned to the ``to1..to4`` destination
+    corners (normalised 0..1, Nuke's bottom-left origin: to1 = bottom-left,
+    to2 = bottom-right, to3 = top-right, to4 = top-left). A true homography
+    is solved from the four corner pairs, inverted, and every output pixel
+    centre is resampled from its source position through ``remap_image``.
+    Pixels outside the pinned quad are transparent black.
     """
 
     @classmethod
@@ -354,7 +333,7 @@ class NukeCornerPin(NukeNodeBase):
                     "FLOAT",
                     {"default": 1.0, "min": -1.0, "max": 2.0, "step": 0.01},
                 ),
-                "filter": (["nearest", "bilinear"], {"default": "bilinear"}),
+                "filter": (list(FILTER_NAMES), {"default": "cubic"}),
             }
         }
 
@@ -369,84 +348,85 @@ class NukeCornerPin(NukeNodeBase):
         img = ensure_batch_dim(image)
         batch_size, height, width, channels = img.shape
 
-        # Ensure we have RGBA channels for proper transparency
-        if channels == 3:
-            # Add alpha channel if missing
-            alpha = torch.ones(
-                batch_size, height, width, 1, device=img.device, dtype=img.dtype
-            )
-            img = torch.cat([img, alpha], dim=3)
-            channels = 4
-
-        # Convert to tensor format for grid_sample
-        img_tensor = img.permute(0, 3, 1, 2)
-
-        # Source corners (normalized)
-        src_corners = torch.tensor(
-            [[-1, -1], [1, -1], [1, 1], [-1, 1]], dtype=torch.float32
+        # Source corners in pixel coordinates (top-row-first arrays), in Nuke
+        # order: bottom-left, bottom-right, top-right, top-left.
+        src = np.array(
+            [[0.0, height], [width, height], [width, 0.0], [0.0, 0.0]],
+            dtype=np.float64,
         )
-
-        # Destination corners (normalized)
-        dst_corners = torch.tensor(
+        # Destination corners: normalised, bottom-left origin -> pixel coords
+        dst = np.array(
             [
-                [to1_x * 2 - 1, to1_y * 2 - 1],
-                [to2_x * 2 - 1, to2_y * 2 - 1],
-                [to3_x * 2 - 1, to3_y * 2 - 1],
-                [to4_x * 2 - 1, to4_y * 2 - 1],
+                [to1_x * width, (1.0 - to1_y) * height],
+                [to2_x * width, (1.0 - to2_y) * height],
+                [to3_x * width, (1.0 - to3_y) * height],
+                [to4_x * width, (1.0 - to4_y) * height],
             ],
-            dtype=torch.float32,
+            dtype=np.float64,
         )
 
-        # Create perspective transformation grid
-        grid = self._create_perspective_grid(
-            src_corners, dst_corners, height, width, img.device
-        )
+        arr = _to_rgba_numpy(img)
 
-        # Apply transformation with proper boundary handling for transparency
-        mode = "nearest" if filter == "nearest" else "bilinear"
-        # Grid is built for batch 1; expand it to the image batch size
-        grid = grid.expand(img_tensor.shape[0], -1, -1, -1)
-        result = F.grid_sample(
-            img_tensor, grid, mode=mode, padding_mode="zeros", align_corners=False
-        )
+        homography = self._solve_homography(src, dst)
+        if homography is None:
+            logger.warning(
+                "[NukeCornerPin] Degenerate corner configuration; "
+                "returning the input unchanged"
+            )
+            result = torch.from_numpy(arr).to(img.device)
+            return (normalize_tensor(result),)
 
-        # Convert back to ComfyUI format
-        result = result.permute(0, 2, 3, 1)
+        map_x, map_y = self._source_maps(homography, height, width)
+        out = _remap_batch(arr, map_x, map_y, filter)
 
+        result = torch.from_numpy(out).to(img.device)
         return (normalize_tensor(result),)
 
-    def _create_perspective_grid(self, src_corners, dst_corners, height, width, device):
-        """Create perspective transformation grid"""
-        # This is a simplified perspective transformation
-        # For a full implementation, you'd solve for the homography matrix
+    @staticmethod
+    def _solve_homography(src, dst):
+        """3x3 homography H with dst ~ H @ src for the four corner pairs.
 
-        # Create coordinate grid
-        y_coords = torch.linspace(-1, 1, height, device=device)
-        x_coords = torch.linspace(-1, 1, width, device=device)
-        y_grid, x_grid = torch.meshgrid(y_coords, x_coords, indexing="ij")
+        Returns None when the system is singular (collinear/coincident corners).
+        """
+        if np.allclose(src, dst):
+            return np.eye(3, dtype=np.float64)
+        A = []
+        b = []
+        for (x, y), (u, v) in zip(src, dst):
+            A.append([x, y, 1, 0, 0, 0, -u * x, -u * y])
+            b.append(u)
+            A.append([0, 0, 0, x, y, 1, -v * x, -v * y])
+            b.append(v)
+        A = np.array(A, dtype=np.float64)
+        b = np.array(b, dtype=np.float64)
+        try:
+            h = np.linalg.solve(A, b)
+        except np.linalg.LinAlgError:
+            return None
+        if not np.all(np.isfinite(h)):
+            return None
+        return np.append(h, 1.0).reshape(3, 3)
 
-        # Simple bilinear interpolation between corners
-        # This is a simplified version - full perspective would require homography
-
-        # Interpolate in u direction (left-right)
-        u = (x_grid + 1) / 2  # Convert from [-1,1] to [0,1]
-        v = (y_grid + 1) / 2  # Convert from [-1,1] to [0,1]
-
-        # Bilinear interpolation of corner positions
-        top_interp = dst_corners[0] * (1 - u).unsqueeze(-1) + dst_corners[
-            1
-        ] * u.unsqueeze(-1)
-        bottom_interp = dst_corners[3] * (1 - u).unsqueeze(-1) + dst_corners[
-            2
-        ] * u.unsqueeze(-1)
-
-        final_coords = top_interp * (1 - v).unsqueeze(-1) + bottom_interp * v.unsqueeze(
-            -1
-        )
-
-        grid = final_coords.unsqueeze(0)  # Add batch dimension
-
-        return grid
+    @staticmethod
+    def _source_maps(homography, height, width):
+        """Source-coordinate maps for remap_image via the inverse homography."""
+        try:
+            inv = np.linalg.inv(homography)
+        except np.linalg.LinAlgError:
+            inv = np.eye(3, dtype=np.float64)
+        xs, ys = identity_maps(height, width)  # output pixel centres
+        xs64 = xs.astype(np.float64)
+        ys64 = ys.astype(np.float64)
+        w = inv[2, 0] * xs64 + inv[2, 1] * ys64 + inv[2, 2]
+        src_x = inv[0, 0] * xs64 + inv[0, 1] * ys64 + inv[0, 2]
+        src_y = inv[1, 0] * xs64 + inv[1, 1] * ys64 + inv[1, 2]
+        # Points with w <= 0 lie "behind" the projection; push them far
+        # outside the source so they resolve to transparent black.
+        valid = w > 1e-12
+        safe_w = np.where(valid, w, 1.0)
+        src_x = np.where(valid, src_x / safe_w, -1.0e6)
+        src_y = np.where(valid, src_y / safe_w, -1.0e6)
+        return src_x.astype(np.float32), src_y.astype(np.float32)
 
 
 class NukeCrop(NukeNodeBase):

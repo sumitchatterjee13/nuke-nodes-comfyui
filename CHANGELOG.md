@@ -2,6 +2,40 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.0.0] - 2026-08-20
+
+Major release. Saved workflows from 1.x need re-wiring where noted below; 1.3.0 stays available on the Comfy Registry and as git tag `v1.3.0`.
+
+### Breaking
+
+- **OpenImageIO is now required** for all image I/O (it is installed automatically from `requirements.txt`). The OpenCV/PIL read/write fallbacks are gone.
+- **Colour management follows `$OCIO`.** When the `OCIO` environment variable points at a config (show/studio config), every colour dropdown is built from it at ComfyUI startup; otherwise the built-in ACES 2.0 Studio config is used. The `config` input was removed from NukeOCIOColorSpace and NukeOCIODisplay.
+- **NukeRead / NukeWrite `colorspace`** now lists `raw` plus every colourspace of the active OCIO config (was `raw/sRGB/linear/ACEScg`); conversion is done by OCIO against the config's `scene_linear` role. Workflows using `sRGB` / `linear` must pick the equivalent config name (e.g. `sRGB Encoded Rec.709 (sRGB)`, `Linear Rec.709 (sRGB)`).
+- **Mask inputs are `MASK` typed** (ComfyUI convention) on NukeBlur, NukeDefocus (`depth_map`), NukeGrade, NukeExposure and NukeViewer - existing IMAGE links into those sockets are dropped on load.
+- **NukeMix -> NukeDissolve** (inputs `A`, `B`, `which`; 0 = A, 1 = B - Nuke's Dissolve knob).
+- **NukeExposureAdvanced merged into NukeExposure** (per-channel stops, exposure type, preserve highlights, multiply/offset, clamp, mix, mask in one node).
+- **NukeVectorfield and NukeVectorfieldInfo removed** - NukeOCIOFileTransform is the single LUT engine (OCIO reads .cube/.3dl/.spi1d/.spi3d/.csp/.clf/.ctf/.cdl); the LUT folder listing moved into NukeOCIOInfo.
+- **NukeTransform / NukeCornerPin filters** are now `impulse`, `cubic`, `lanczos`, `area` (resampled with OpenCV, shared with NukeReformat) instead of the 11 Nuke names that only ever produced bilinear.
+- **NukeCornerPin is a true perspective (homography) warp** with Nuke's bottom-left origin for the `to*` corners; 1.x used a bilinear corner interpolation with a top-left origin, so non-identity results differ.
+
+### Fixed
+
+- Half-pixel resampling offset in NukeTransform / NukeCornerPin: identity parameters now return the input bit-exactly.
+- NukeTransform `rotate` is now counter-clockwise for positive degrees, as documented (1.x rotated clockwise).
+- NukeViewer crashed when showing a mask overlay on an RGBA image.
+- Multi-pass EXR writes colour-converted bare `N` / `Z` / `P` data passes; they are now recognised as data and left untouched.
+- `missing_frames="hold"` in NukeRead converted the held frame twice.
+
+### Added
+
+- `ocio_config.py`: shared `$OCIO` -> built-in ACES resolver, config-driven colourspace/role/display/view lists, tensor transforms.
+- Roles are offered as `role:<name>` entries in the OCIO colourspace dropdowns.
+- A working pytest suite (`python -m pytest tests`) alongside `tools/smoke_test.py`; the `io_nodes.py` monolith is split into `sequence.py`, `image_io.py`, `preview.py` and `io_nodes.py`; shared mask/mix and resampling helpers in `utils.py`.
+
+### Removed
+
+- Stale `package.json` (node list duplicated pyproject.toml); the old, uncollectable `tests/` files.
+
 ## [1.3.0] - 2026-08-20
 
 ### Fixed

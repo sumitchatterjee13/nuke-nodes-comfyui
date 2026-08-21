@@ -9,11 +9,21 @@ In Nuke's Merge node:
 All Porter-Duff operations follow standard compositing formulas.
 """
 
+import logging
+
 import numpy as np
 import torch
 import torch.nn.functional as F
 
-from .utils import NukeNodeBase, ensure_batch_dim, normalize_tensor
+from .utils import (
+    NukeNodeBase,
+    apply_mask_mix,
+    ensure_batch_dim,
+    mask_to_bhw1,
+    normalize_tensor,
+)
+
+logger = logging.getLogger(__name__)
 
 
 class NukeMerge(NukeNodeBase):
@@ -301,86 +311,58 @@ class NukeMerge(NukeNodeBase):
             result_rgb = a_rgb * a_alpha + b_rgb * (1 - a_alpha)
             result_alpha = a_alpha + b_alpha * (1 - a_alpha)
 
-        # Apply mask if provided
-        if mask is not None:
-            # ComfyUI MASK type is typically (B, H, W) - 3D tensor
-            # Handle different mask formats
-            if len(mask.shape) == 2:
-                # (H, W) -> (1, H, W, 1)
-                mask_alpha = mask.unsqueeze(0).unsqueeze(-1)
-            elif len(mask.shape) == 3:
-                # (B, H, W) -> (B, H, W, 1)
-                mask_alpha = mask.unsqueeze(-1)
-            elif len(mask.shape) == 4:
-                # (B, H, W, C) - take first channel
-                mask_alpha = mask[:, :, :, :1]
-            else:
-                mask_alpha = mask
-
-            # Resize mask if needed
-            if mask_alpha.shape[1:3] != result_rgb.shape[1:3]:
-                # Need to permute for interpolate: (B, H, W, 1) -> (B, 1, H, W)
-                mask_alpha = mask_alpha.permute(0, 3, 1, 2)
-                mask_alpha = F.interpolate(
-                    mask_alpha,
-                    size=(result_rgb.shape[1], result_rgb.shape[2]),
-                    mode="bilinear",
-                    align_corners=False,
-                )
-                # Back to (B, H, W, 1)
-                mask_alpha = mask_alpha.permute(0, 2, 3, 1)
-
-            # Blend between B (original) and result based on mask
-            effective_mix = mask_alpha * mix
-            result_rgb = b_rgb + (result_rgb - b_rgb) * effective_mix
-            result_alpha = b_alpha + (result_alpha - b_alpha) * effective_mix
-        else:
-            # Apply mix factor - blend between B and result
-            if mix < 1.0:
-                result_rgb = b_rgb + (result_rgb - b_rgb) * mix
-                result_alpha = b_alpha + (result_alpha - b_alpha) * mix
+        # Blend between B (original) and the merged result by mix and the
+        # optional mask: B + (result - B) * mix * mask
+        result = torch.cat([result_rgb, result_alpha], dim=3)
+        original = torch.cat([b_rgb, b_alpha], dim=3)
+        result = apply_mask_mix(original, result, mask, mix)
 
         # Clamp results
-        result_rgb = torch.clamp(result_rgb, 0, 1)
-        result_alpha = torch.clamp(result_alpha, 0, 1)
+        result = torch.clamp(result, 0, 1)
 
-        # Combine RGB and alpha
-        if A.shape[-1] >= 4 or B.shape[-1] >= 4:
-            result = torch.cat([result_rgb, result_alpha], dim=3)
-        else:
-            result = result_rgb
+        # Drop alpha unless either input carried one
+        if not (A.shape[-1] >= 4 or B.shape[-1] >= 4):
+            result = result[:, :, :, :3]
 
         return (result,)
 
 
-class NukeMix(NukeNodeBase):
+class NukeDissolve(NukeNodeBase):
     """
-    Simple mix node for blending two images with a factor
+    Dissolve between two images, matching Nuke's Dissolve node.
+
+    which = 0 returns A, which = 1 returns B, intermediate values blend linearly.
     """
 
     @classmethod
     def INPUT_TYPES(cls):
         return {
             "required": {
-                "image_a": ("IMAGE",),
-                "image_b": ("IMAGE",),
-                "mix": (
+                "A": ("IMAGE",),
+                "B": ("IMAGE",),
+                "which": (
                     "FLOAT",
-                    {"default": 0.5, "min": 0.0, "max": 1.0, "step": 0.01},
+                    {
+                        "default": 0.0,
+                        "min": 0.0,
+                        "max": 1.0,
+                        "step": 0.01,
+                        "tooltip": "0 = A, 1 = B",
+                    },
                 ),
             }
         }
 
     RETURN_TYPES = ("IMAGE",)
-    FUNCTION = "mix"
+    FUNCTION = "dissolve"
     CATEGORY = "Nuke/Merge"
 
-    def mix(self, image_a, image_b, mix):
+    def dissolve(self, A, B, which):
         """
-        Linear mix between two images
+        Linear dissolve between A and B
         """
-        a = ensure_batch_dim(image_a)
-        b = ensure_batch_dim(image_b)
+        a = ensure_batch_dim(A)
+        b = ensure_batch_dim(B)
 
         # Resize if needed
         if a.shape[1:3] != b.shape[1:3]:
@@ -400,7 +382,7 @@ class NukeMix(NukeNodeBase):
                 align_corners=False,
             ).permute(0, 2, 3, 1)
 
-        result = a * (1 - mix) + b * mix
+        result = a * (1 - which) + b * which
         return (normalize_tensor(result),)
 
 
@@ -490,42 +472,19 @@ class NukeKeymix(NukeNodeBase):
             )
             b = torch.cat([b, pad], dim=3)
 
-        # Normalize mask to (B, H, W, 1)
-        if mask.dim() == 2:
-            m = mask.unsqueeze(0).unsqueeze(-1)
-        elif mask.dim() == 3:
-            m = mask.unsqueeze(-1)
-        elif mask.dim() == 4:
-            # Take first channel if a multi-channel "mask" was passed
-            m = mask[..., :1]
-        else:
-            raise ValueError(f"Unsupported mask shape: {tuple(mask.shape)}")
-
-        # Resize mask to match the output resolution
-        if m.shape[1:3] != b.shape[1:3]:
-            m = F.interpolate(
-                m.permute(0, 3, 1, 2),
-                size=(b.shape[1], b.shape[2]),
-                mode="bilinear",
-                align_corners=False,
-            ).permute(0, 2, 3, 1)
-
-        # Broadcast mask across batch if user passed a single mask for
-        # multiple frames (common when piping a static matte into a
-        # multi-frame latent).
-        if m.shape[0] == 1 and b.shape[0] > 1:
-            m = m.expand(b.shape[0], -1, -1, -1)
+        # Normalize mask to (B, H, W, 1) at the output resolution. A
+        # single mask broadcasts across a multi-frame batch.
+        m = mask_to_bhw1(mask, b.shape[1], b.shape[2], b.device)
 
         # Optional invert
         if invert_mask:
             m = 1.0 - m
 
-        # Apply overall mix as a multiplier on the mask. mix=0 leaves
-        # everything as B; mix=1 honors the mask exactly.
-        m_eff = m * float(mix)
-
-        # Keymix: linear interpolation between A and B
-        result = a * m_eff + b * (1.0 - m_eff)
+        # Keymix: linear interpolation between A and B driven by the mask,
+        # with mix as an overall multiplier (mix=0 leaves everything as B,
+        # mix=1 honors the mask exactly):
+        #     result = B + (A - B) * mask * mix  ==  A*m_eff + B*(1 - m_eff)
+        result = apply_mask_mix(b, a, m, mix)
         return (result,)
 
 
@@ -615,14 +574,14 @@ class NukeConstant(NukeNodeBase):
 # Node mappings
 NODE_CLASS_MAPPINGS = {
     "NukeMerge": NukeMerge,
-    "NukeMix": NukeMix,
+    "NukeDissolve": NukeDissolve,
     "NukeKeymix": NukeKeymix,
     "NukeConstant": NukeConstant,
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
     "NukeMerge": "Nuke Merge",
-    "NukeMix": "Nuke Mix",
+    "NukeDissolve": "Nuke Dissolve",
     "NukeKeymix": "Nuke Keymix",
     "NukeConstant": "Nuke Constant",
 }

@@ -2,11 +2,14 @@
 Color grading and correction nodes that replicate Nuke's color tools
 """
 
+import logging
+
 import numpy as np
 import torch
-import torch.nn.functional as F
 
-from .utils import NukeNodeBase, ensure_batch_dim, normalize_tensor
+from .utils import NukeNodeBase, apply_mask_mix, ensure_batch_dim, normalize_tensor
+
+logger = logging.getLogger(__name__)
 
 
 class NukeGrade(NukeNodeBase):
@@ -84,7 +87,7 @@ class NukeGrade(NukeNodeBase):
                 ),
             },
             "optional": {
-                "mask": ("IMAGE",),
+                "mask": ("MASK",),
             },
         }
 
@@ -167,20 +170,8 @@ class NukeGrade(NukeNodeBase):
         # Apply master multiply and offset
         rgb_graded = rgb_graded * multiply + offset
 
-        # Apply mask if provided
-        if mask is not None:
-            mask = ensure_batch_dim(mask)
-            if mask.shape[1:3] != rgb.shape[1:3]:
-                mask = F.interpolate(
-                    mask.permute(0, 3, 1, 2),
-                    size=rgb.shape[1:3],
-                    mode="bilinear",
-                    align_corners=False,
-                ).permute(0, 2, 3, 1)
-
-            mask_alpha = mask[:, :, :, :1]
-            rgb_graded = rgb + (rgb_graded - rgb) * mask_alpha
-        # If no mask, use the full graded result (no mix needed)
+        # Apply mask if provided (no mask -> full graded result)
+        rgb_graded = apply_mask_mix(rgb, rgb_graded, mask)
 
         # Recombine with alpha
         if alpha is not None:
@@ -446,125 +437,8 @@ class NukeLevels(NukeNodeBase):
 
 class NukeExposure(NukeNodeBase):
     """
-    Exposure adjustment node that replicates Nuke's Exposure node functionality
-    """
-
-    @classmethod
-    def INPUT_TYPES(cls):
-        return {
-            "required": {
-                "image": ("IMAGE",),
-                "stops": (
-                    "FLOAT",
-                    {"default": 0.0, "min": -10.0, "max": 10.0, "step": 0.1},
-                ),
-                "exposure_type": (
-                    ["stops", "printer_lights", "film_density"],
-                    {"default": "stops"},
-                ),
-                "multiply": (
-                    "FLOAT",
-                    {"default": 1.0, "min": 0.0, "max": 10.0, "step": 0.01},
-                ),
-                "offset": (
-                    "FLOAT",
-                    {"default": 0.0, "min": -1.0, "max": 1.0, "step": 0.01},
-                ),
-                "clamp_output": (
-                    "BOOLEAN",
-                    {"default": True},
-                ),
-                "mix": (
-                    "FLOAT",
-                    {"default": 1.0, "min": 0.0, "max": 1.0, "step": 0.01},
-                ),
-            },
-            "optional": {
-                "mask": ("IMAGE",),
-            },
-        }
-
-    RETURN_TYPES = ("IMAGE",)
-    FUNCTION = "adjust_exposure"
-    CATEGORY = "Nuke/Color"
-
-    def adjust_exposure(
-        self,
-        image,
-        stops,
-        exposure_type,
-        multiply,
-        offset,
-        clamp_output,
-        mix,
-        mask=None,
-    ):
-        """
-        Adjust image exposure using f-stops, printer lights, or film density units
-        """
-        img = ensure_batch_dim(image)
-
-        # Separate RGB and alpha channels
-        if img.shape[3] >= 4:
-            rgb = img[:, :, :, :3]
-            alpha = img[:, :, :, 3:]
-        else:
-            rgb = img
-            alpha = None
-
-        # Calculate exposure multiplier based on type
-        if exposure_type == "stops":
-            # F-stops: 2^stops
-            exposure_multiplier = 2.0**stops
-        elif exposure_type == "printer_lights":
-            # Printer lights: 10^(stops/25) (typical printer light conversion)
-            exposure_multiplier = 10.0 ** (stops / 25.0)
-        elif exposure_type == "film_density":
-            # Film density: 10^(-stops) (density is inversely related to exposure)
-            exposure_multiplier = 10.0 ** (-stops)
-        else:
-            # Default to f-stops
-            exposure_multiplier = 2.0**stops
-
-        # Apply exposure adjustment
-        rgb_exposed = rgb * exposure_multiplier
-
-        # Apply multiply and offset (like Nuke's Grade node)
-        rgb_exposed = rgb_exposed * multiply + offset
-
-        # Clamp output if requested
-        if clamp_output:
-            rgb_exposed = torch.clamp(rgb_exposed, 0.0, 1.0)
-
-        # Apply mask if provided
-        if mask is not None:
-            mask = ensure_batch_dim(mask)
-            if mask.shape[1:3] != rgb.shape[1:3]:
-                mask = F.interpolate(
-                    mask.permute(0, 3, 1, 2),
-                    size=rgb.shape[1:3],
-                    mode="bilinear",
-                    align_corners=False,
-                ).permute(0, 2, 3, 1)
-
-            mask_alpha = mask[:, :, :, :1]
-            rgb_exposed = rgb + (rgb_exposed - rgb) * mask_alpha * mix
-        else:
-            # Apply mix factor
-            rgb_exposed = rgb + (rgb_exposed - rgb) * mix
-
-        # Recombine with alpha
-        if alpha is not None:
-            result = torch.cat([rgb_exposed, alpha], dim=3)
-        else:
-            result = rgb_exposed
-
-        return (normalize_tensor(result),)
-
-
-class NukeExposureAdvanced(NukeNodeBase):
-    """
-    Advanced exposure node with separate RGB channel controls
+    Exposure adjustment node that replicates Nuke's Exposure node functionality,
+    with master stops plus per-channel stop offsets.
     """
 
     @classmethod
@@ -590,10 +464,17 @@ class NukeExposureAdvanced(NukeNodeBase):
                     "FLOAT",
                     {"default": 0.0, "min": -5.0, "max": 5.0, "step": 0.1},
                 ),
-                # Additional controls
                 "exposure_type": (
                     ["stops", "printer_lights", "film_density"],
                     {"default": "stops"},
+                ),
+                "multiply": (
+                    "FLOAT",
+                    {"default": 1.0, "min": 0.0, "max": 10.0, "step": 0.01},
+                ),
+                "offset": (
+                    "FLOAT",
+                    {"default": 0.0, "min": -1.0, "max": 1.0, "step": 0.01},
                 ),
                 "preserve_highlights": (
                     "BOOLEAN",
@@ -609,15 +490,15 @@ class NukeExposureAdvanced(NukeNodeBase):
                 ),
             },
             "optional": {
-                "mask": ("IMAGE",),
+                "mask": ("MASK",),
             },
         }
 
     RETURN_TYPES = ("IMAGE",)
-    FUNCTION = "adjust_exposure_advanced"
+    FUNCTION = "adjust_exposure"
     CATEGORY = "Nuke/Color"
 
-    def adjust_exposure_advanced(
+    def adjust_exposure(
         self,
         image,
         stops,
@@ -625,13 +506,16 @@ class NukeExposureAdvanced(NukeNodeBase):
         stops_g_offset,
         stops_b_offset,
         exposure_type,
+        multiply,
+        offset,
         preserve_highlights,
         clamp_output,
         mix,
         mask=None,
     ):
         """
-        Advanced exposure adjustment with per-channel controls
+        Adjust image exposure using f-stops, printer lights, or film density units,
+        with optional per-channel stop offsets
         """
         img = ensure_batch_dim(image)
 
@@ -643,7 +527,7 @@ class NukeExposureAdvanced(NukeNodeBase):
             rgb = img
             alpha = None
 
-        # Calculate final exposure values for each channel
+        # Calculate final exposure values for each channel: master + offset
         final_stops_r = stops + stops_r_offset
         final_stops_g = stops + stops_g_offset
         final_stops_b = stops + stops_b_offset
@@ -651,12 +535,16 @@ class NukeExposureAdvanced(NukeNodeBase):
         # Calculate exposure multipliers based on type
         def calculate_multiplier(stop_value):
             if exposure_type == "stops":
+                # F-stops: 2^stops
                 return 2.0**stop_value
             elif exposure_type == "printer_lights":
+                # Printer lights: 10^(stops/25) (typical printer light conversion)
                 return 10.0 ** (stop_value / 25.0)
             elif exposure_type == "film_density":
+                # Film density: 10^(-stops) (density is inversely related to exposure)
                 return 10.0 ** (-stop_value)
             else:
+                # Default to f-stops
                 return 2.0**stop_value
 
         multiplier_r = calculate_multiplier(final_stops_r)
@@ -683,26 +571,15 @@ class NukeExposureAdvanced(NukeNodeBase):
                 rgb_exposed,
             )
 
+        # Apply multiply and offset (like Nuke's Grade node)
+        rgb_exposed = rgb_exposed * multiply + offset
+
         # Clamp output if requested
         if clamp_output:
             rgb_exposed = torch.clamp(rgb_exposed, 0.0, 1.0)
 
-        # Apply mask if provided
-        if mask is not None:
-            mask = ensure_batch_dim(mask)
-            if mask.shape[1:3] != rgb.shape[1:3]:
-                mask = F.interpolate(
-                    mask.permute(0, 3, 1, 2),
-                    size=rgb.shape[1:3],
-                    mode="bilinear",
-                    align_corners=False,
-                ).permute(0, 2, 3, 1)
-
-            mask_alpha = mask[:, :, :, :1]
-            rgb_exposed = rgb + (rgb_exposed - rgb) * mask_alpha * mix
-        else:
-            # Apply mix factor
-            rgb_exposed = rgb + (rgb_exposed - rgb) * mix
+        # Apply mix and optional mask
+        rgb_exposed = apply_mask_mix(rgb, rgb_exposed, mask, mix)
 
         # Recombine with alpha
         if alpha is not None:
@@ -719,7 +596,6 @@ NODE_CLASS_MAPPINGS = {
     "NukeColorCorrect": NukeColorCorrect,
     "NukeLevels": NukeLevels,
     "NukeExposure": NukeExposure,
-    "NukeExposureAdvanced": NukeExposureAdvanced,
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
@@ -727,5 +603,4 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "NukeColorCorrect": "Nuke Color Correct",
     "NukeLevels": "Nuke Levels",
     "NukeExposure": "Nuke Exposure",
-    "NukeExposureAdvanced": "Nuke Exposure Advanced",
 }

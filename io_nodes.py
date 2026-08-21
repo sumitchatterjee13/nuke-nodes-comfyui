@@ -1,22 +1,15 @@
 """
 Read and Write nodes for loading and saving images, similar to Nuke's Read/Write nodes.
 
-Supports a wide variety of image formats through OpenImageIO (OIIO) or fallback to
-OpenCV/PIL. Includes full support for image sequences with frame pattern matching.
+Pixel I/O goes through OpenImageIO only (see ``image_io.py``); frame-sequence
+path handling lives in ``sequence.py`` and thumbnail previews in
+``preview.py``. Colour management is driven by the shared OpenColorIO config
+(``ocio_config.py``): the ``colorspace`` dropdowns list the colourspaces of
+the active config ($OCIO or the built-in ACES Studio config) and the working
+space is the config's ``scene_linear`` role.
 
-Supported formats (with OIIO):
-- EXR (OpenEXR) - 16/32-bit float, multiple compression options
-- TIFF - 8/16/32-bit, various compression
-- PNG - 8/16-bit with alpha
-- JPEG/JPG - 8-bit
-- DPX - 10/16-bit (common in film)
-- Cineon - 10-bit log
-- HDR/RGBE - HDR radiance format
-- TGA/Targa - 8-bit with alpha
-- BMP - 8-bit
-- PSD - Photoshop (read-only)
-- RAW formats - via LibRaw plugin
-- And many more...
+Supported formats (OIIO): EXR, TIFF, PNG, JPEG, DPX, Cineon, HDR, TGA, BMP,
+PSD (read-only), camera RAW via LibRaw, and many more.
 
 Sequence patterns supported:
 - %04d style (printf format): image.%04d.exr
@@ -24,1196 +17,97 @@ Sequence patterns supported:
 - Frame ranges: 1-100, 1-100x2 (every 2nd frame)
 """
 
-import glob
 import logging
 import os
-import re
-from pathlib import Path
-from typing import Dict, List, Optional, Tuple, Union
+from typing import List
 
 import folder_paths
 import numpy as np
 import torch
+import torch.nn.functional as F
+
+from . import ocio_config
+from .image_io import (
+    OIIO_AVAILABLE,
+    get_supported_formats,
+    oiio,
+    oiio_version,
+    read_image,
+    write_image,
+)
+from .preview import create_preview_images
+from .sequence import (
+    _file_exists_case_aware,
+    _versioned_sequence_pattern,
+    _warn_stale_frames,
+    auto_detect_sequence,
+    detect_sequence,
+    expand_frame_pattern,
+    file_change_token,
+    parse_frame_pattern,
+)
+from .utils import NukeNodeBase, cv2, ensure_batch_dim
 
 logger = logging.getLogger(__name__)
 
 
 # ============================================================================
-# No-CAT primary-rotation matrices for Rec.709 <-> ACEScg (AP1)
-# ============================================================================
-#
-# Built from chromaticity coordinates at D65 for both spaces — i.e. NO
-# chromatic adaptation, matching Nuke's non-OCIO (legacy / nuke-default)
-# behavior. The strict-spec ACEScg whitepoint is D60, but Nuke and most
-# legacy VFX pipelines treat it as D65 to keep round-trips bit-exact and
-# avoid the asymmetric blue-channel drift that Bradford CAT introduces.
-#
-# Same math as nuke_compat.py in the HDR VACE pipeline tools — keeps the
-# Read/Write nodes consistent with that convention so a file written by
-# this Write node and re-read by this Read node (or by Nuke's Read in
-# nuke-default mode) round-trips clean.
-
-_REC709_PRIMARIES = {
-    "R": (0.640, 0.330),
-    "G": (0.300, 0.600),
-    "B": (0.150, 0.060),
-    "W": (0.3127, 0.3290),  # D65
-}
-_AP1_PRIMARIES_D65_LEGACY = {
-    "R": (0.713, 0.293),
-    "G": (0.165, 0.830),
-    "B": (0.128, 0.044),
-    "W": (0.3127, 0.3290),  # D65 (legacy / no-CAT mapping)
-}
-
-
-def _rgb_to_xyz_matrix(primaries: dict) -> np.ndarray:
-    """Build a 3x3 RGB -> CIE XYZ matrix from chromaticity coords.
-
-    Standard SMPTE / CIE construction:
-      1. Form M_p with columns (x/y, 1, z/y) for each primary.
-      2. Solve M_p @ S = W_xyz for per-channel scale factors S.
-      3. Multiply M_p columns by S.
-    """
-    xr, yr = primaries["R"]
-    xg, yg = primaries["G"]
-    xb, yb = primaries["B"]
-    xw, yw = primaries["W"]
-
-    def xyz_col(x, y):
-        return np.array([x / y, 1.0, (1.0 - x - y) / y])
-
-    M_p = np.column_stack(
-        [xyz_col(xr, yr), xyz_col(xg, yg), xyz_col(xb, yb)]
-    )
-    W_xyz = xyz_col(xw, yw)
-    S = np.linalg.solve(M_p, W_xyz)
-    return M_p * S  # broadcast across columns
-
-
-_M_REC709_TO_XYZ = _rgb_to_xyz_matrix(_REC709_PRIMARIES)
-_M_AP1_TO_XYZ = _rgb_to_xyz_matrix(_AP1_PRIMARIES_D65_LEGACY)
-_M_REC709_TO_AP1 = np.linalg.inv(_M_AP1_TO_XYZ) @ _M_REC709_TO_XYZ
-_M_AP1_TO_REC709 = np.linalg.inv(_M_REC709_TO_XYZ) @ _M_AP1_TO_XYZ
-
-
-def _apply_primary_matrix(img: np.ndarray, matrix: np.ndarray) -> np.ndarray:
-    """Apply a 3x3 color matrix to an (H, W, 3) or (H, W, 4) image.
-
-    Alpha is left unchanged; only the RGB channels are transformed.
-    """
-    if img.ndim != 3 or img.shape[2] not in (3, 4):
-        raise ValueError(
-            f"_apply_primary_matrix expects (H, W, 3) or (H, W, 4), got {img.shape}"
-        )
-    rgb = img[..., :3].astype(np.float32, copy=False)
-    transformed = rgb @ matrix.T.astype(np.float32)
-    if img.shape[2] == 4:
-        return np.concatenate([transformed, img[..., 3:4]], axis=-1)
-    return transformed
-
-from .utils import NukeNodeBase, ensure_batch_dim, normalize_tensor
-
-# Try to import OpenImageIO
-OIIO_AVAILABLE = False
-try:
-    import OpenImageIO as oiio
-
-    OIIO_AVAILABLE = True
-except ImportError:
-    oiio = None
-
-# Fallback to OpenCV
-CV2_AVAILABLE = False
-try:
-    import cv2
-
-    CV2_AVAILABLE = True
-except ImportError:
-    cv2 = None
-
-# Fallback to PIL
-PIL_AVAILABLE = False
-try:
-    from PIL import Image as PILImage
-
-    PIL_AVAILABLE = True
-except ImportError:
-    PILImage = None
-
-
-# ============================================================================
-# Sequence Pattern Utilities
+# Colour helpers (OpenColorIO)
 # ============================================================================
 
-
-def parse_frame_pattern(filepath: str) -> Tuple[str, Optional[str], int]:
-    """
-    Parse a filepath to detect frame pattern and padding.
-
-    Supports:
-    - %04d style: image.%04d.exr
-    - #### style: image.####.exr
-    - Literal frame number: image.0001.exr
-
-    Returns:
-        (base_pattern, frame_spec, padding)
-        - base_pattern: pattern with %0Nd placeholder
-        - frame_spec: original frame specifier or None
-        - padding: number of digits for padding
-    """
-    # Normalize path separators for consistent handling
-    filepath = filepath.replace("\\", "/")
-
-    # Check for %0Nd pattern
-    match = re.search(r"%(\d*)d", filepath)
-    if match:
-        padding = int(match.group(1)) if match.group(1) else 4
-        return filepath, match.group(0), padding
-
-    # Check for #### pattern
-    match = re.search(r"(#+)", filepath)
-    if match:
-        hashes = match.group(1)
-        padding = len(hashes)
-        pattern = filepath.replace(hashes, f"%0{padding}d")
-        return pattern, hashes, padding
-
-    # Check for frame number in filename (e.g., image.0001.exr)
-    # Match number before extension
-    match = re.search(r"(\d+)(\.[^.]+)$", filepath)
-    if match:
-        frame_str = match.group(1)
-        padding = len(frame_str)
-        ext = match.group(2)
-        base = filepath[: match.start()]
-        pattern = f"{base}%0{padding}d{ext}"
-        return pattern, frame_str, padding
-
-    return filepath, None, 0
-
-
-def expand_frame_pattern(pattern: str, frame: int, padding: int = 4) -> str:
-    """
-    Expand a frame pattern to an actual filename.
-
-    Args:
-        pattern: Pattern with %0Nd or #### placeholder
-        frame: Frame number
-        padding: Digit padding
-
-    Returns:
-        Expanded filename
-    """
-    # Handle %0Nd pattern
-    if "%" in pattern:
-        return pattern % frame
-
-    # Handle #### pattern
-    if "#" in pattern:
-        hashes = re.search(r"#+", pattern).group(0)
-        return pattern.replace(hashes, str(frame).zfill(len(hashes)))
-
-    return pattern
-
-
-def detect_sequence(filepath: str) -> Tuple[str, List[int], int]:
-    """
-    Detect an image sequence from a single file path.
-
-    Args:
-        filepath: Path to one file in the sequence
-
-    Returns:
-        (pattern, frames, padding)
-        - pattern: Frame pattern string
-        - frames: List of available frame numbers
-        - padding: Digit padding
-    """
-    # Normalize path separators
-    filepath = filepath.replace("\\", "/")
-
-    pattern, frame_spec, padding = parse_frame_pattern(filepath)
-
-    if frame_spec is None or padding == 0:
-        # Not a sequence, single file
-        if os.path.exists(filepath):
-            return filepath, [0], 0
-        return filepath, [], 0
-
-    # Find all matching files
-    # Convert pattern to glob pattern
-    glob_pattern = re.sub(r"%\d*d", "*", pattern)
-    glob_pattern = re.sub(r"#+", "*", glob_pattern)
-
-    logger.info(f"[NukeRead] Searching for sequence with pattern: {glob_pattern}")
-
-    matching_files = glob.glob(glob_pattern)
-
-    if not matching_files:
-        logger.warning(f"[NukeRead] No files found matching pattern: {glob_pattern}")
-        # Check if directory exists
-        directory = os.path.dirname(glob_pattern)
-        if os.path.exists(directory):
-            logger.info(f"[NukeRead] Directory exists: {directory}")
-            # List files in directory for debugging
-            try:
-                files = os.listdir(directory)
-                logger.info(
-                    f"[NukeRead] Files in directory: {files[:10]}..."
-                )  # Show first 10
-            except Exception as e:
-                logger.error(f"[NukeRead] Error listing directory: {e}")
-        else:
-            logger.warning(f"[NukeRead] Directory does not exist: {directory}")
-        return pattern, [], padding
-
-    logger.info(f"[NukeRead] Found {len(matching_files)} files in sequence")
-
-    # Extract frame numbers
-    frames = []
-    for f in matching_files:
-        # Extract number from filename
-        match = re.search(r"(\d+)\.[^.]+$", f)
-        if match:
-            frames.append(int(match.group(1)))
-
-    frames.sort()
-    return pattern, frames, padding
-
-
-def auto_detect_sequence(filepath: str) -> Optional[Tuple[str, List[int], int]]:
-    """
-    Auto-detect an on-disk image sequence from a bare file path that has no
-    frame token (no ####, %0Nd, or literal trailing frame number).
-
-    Given e.g. "renders/beauty.exr", scans the directory for files whose
-    basenames match "beauty<sep><digits>.exr" where <sep> is ".", "_" or
-    empty ("beauty.0001.exr", "beauty_0001.exr", "beauty0001.exr").
-    Matches are grouped by (separator, padding); the group with the most
-    files wins (ties prefer the "." separator, then larger padding).
-    Extension matching is case-insensitive on Windows.
-
-    Stat-only (a single os.listdir, no file contents are read), so it is
-    safe to call from IS_CHANGED on every queue.
-
-    Returns:
-        (pattern, frames, padding) where pattern contains a %0Nd token and
-        frames is the sorted list of detected frame numbers, or None when
-        no matching files are found.
-    """
-    filepath = filepath.replace("\\", "/")
-    directory = os.path.dirname(filepath)
-    basename = os.path.basename(filepath)
-    stem, ext = os.path.splitext(basename)
-    if not stem:
-        return None
-
-    try:
-        entries = os.listdir(directory or ".")
-    except OSError:
-        return None
-
-    ext_rx = f"(?i:{re.escape(ext)})" if _is_windows() else re.escape(ext)
-    name_rx = re.compile("^" + re.escape(stem) + r"([._]?)(\d+)" + ext_rx + "$")
-
-    # Group matching frame numbers by (separator, padding)
-    groups: Dict[Tuple[str, int], List[int]] = {}
-    for entry in entries:
-        match = name_rx.match(entry)
-        if not match:
-            continue
-        sep, digits = match.group(1), match.group(2)
-        groups.setdefault((sep, len(digits)), []).append(int(digits))
-
-    if not groups:
-        return None
-
-    # Most files wins; ties prefer "." separator, then larger padding
-    sep_rank = {".": 2, "_": 1, "": 0}
-    (sep, padding), frame_list = max(
-        groups.items(),
-        key=lambda item: (len(item[1]), sep_rank.get(item[0][0], 0), item[0][1]),
-    )
-    frames = sorted(set(frame_list))
-
-    prefix = f"{directory}/" if directory else ""
-    pattern = f"{prefix}{stem}{sep}%0{padding}d{ext}"
-    return pattern, frames, padding
-
-
-def parse_frame_range(range_str: str) -> List[int]:
-    """
-    Parse a frame range string like "1-100" or "1-100x2" (every 2nd frame).
-
-    Args:
-        range_str: Frame range string
-
-    Returns:
-        List of frame numbers
-    """
-    if not range_str or range_str.strip() == "":
-        return []
-
-    frames = []
-
-    for part in range_str.split(","):
-        part = part.strip()
-
-        # Check for step (x2)
-        step = 1
-        if "x" in part:
-            part, step_str = part.split("x")
-            step = int(step_str)
-
-        # Check for range (-)
-        if "-" in part:
-            start, end = part.split("-")
-            frames.extend(range(int(start), int(end) + 1, step))
-        else:
-            frames.append(int(part))
-
-    return sorted(set(frames))
-
-
-def file_change_token(filepath: str) -> str:
-    """
-    Build a stable change-detection token for a single file path.
-
-    Uses only os.stat (never reads file contents), so it is cheap enough to
-    run from IS_CHANGED on every queue.
-
-    Returns:
-        "<path>|<mtime_ns>|<size>" when the file exists, otherwise a
-        deterministic "missing:<path>" token so the fingerprint changes
-        (and the node re-runs) when the file appears later.
-    """
-    try:
-        st = os.stat(filepath)
-        return f"{filepath}|{st.st_mtime_ns}|{st.st_size}"
-    except OSError:
-        return f"missing:{filepath}"
-
-
-# ============================================================================
-# File Counter Utilities
-# ============================================================================
-
-
-def _is_windows() -> bool:
-    """Check if running on Windows."""
-    import sys
-
-    return (
-        sys.platform.startswith("win")
-        or sys.platform == "cygwin"
-        or sys.platform == "msys"
-    )
-
-
-def _normalize_for_comparison(filename: str) -> str:
-    """
-    Normalize filename for comparison based on platform.
-    Windows filesystem is case-insensitive, Linux/Mac are case-sensitive.
-    """
-    if _is_windows():
-        return filename.lower()
-    return filename
-
-
-def _file_exists_case_aware(filepath: str) -> bool:
-    """
-    Check if file exists, handling case sensitivity properly for each platform.
-    On Windows (case-insensitive), os.path.exists() already handles this.
-    On Linux/Mac (case-sensitive), os.path.exists() is already correct.
-    """
-    # os.path.exists handles platform-specific case sensitivity correctly
-    return os.path.exists(filepath)
-
-
-def get_unique_filepath(filepath: str) -> str:
-    """
-    Get a unique filepath that doesn't overwrite any existing file.
-
-    Handles various naming patterns and preserves zero-padding:
-    - image_0001.exr -> image_0002.exr -> image_0003.exr (preserves padding)
-    - image_1.exr -> image_2.exr -> image_3.exr
-    - image-1.exr -> image-2.exr -> image-3.exr
-    - image.png -> image1.png -> image2.png
-
-    Works correctly on both Windows (case-insensitive) and Linux/Mac (case-sensitive).
-
-    Args:
-        filepath: The desired output filepath
-
-    Returns:
-        A filepath that is guaranteed not to exist
-    """
-    # If file doesn't exist, use it as-is
-    if not _file_exists_case_aware(filepath):
-        return filepath
-
-    directory = os.path.dirname(filepath) or "."
-    filename = os.path.basename(filepath)
-    base, ext = os.path.splitext(filename)
-
-    # Build a set of existing filenames for efficient lookup
-    # Normalize for case-insensitive comparison on Windows
-    try:
-        existing_files = set()
-        if os.path.isdir(directory):
-            for f in os.listdir(directory):
-                existing_files.add(_normalize_for_comparison(f))
-    except (OSError, PermissionError):
-        existing_files = set()
-
-    def _exists(name: str) -> bool:
-        """Check if a filename exists in the directory (case-aware)."""
-        normalized = _normalize_for_comparison(name)
-        if normalized in existing_files:
-            return True
-        # Double-check with filesystem (handles race conditions)
-        return _file_exists_case_aware(os.path.join(directory, name))
-
-    # Pattern 1: Check if base already ends with a separator and number (e.g., image_0001, image-3)
-    # Match patterns like: name_0001, name-123, name.123
-    separator_pattern = re.match(r"^(.+?)([_\-\.])(\d+)$", base)
-
-    if separator_pattern:
-        # File already has a separator+number pattern, increment it
-        prefix = separator_pattern.group(1)
-        separator = separator_pattern.group(2)
-        num_str = separator_pattern.group(3)
-        current_num = int(num_str)
-        # Preserve the original padding (e.g., 0001 has padding of 4)
-        padding = len(num_str)
-
-        # Find next available number
-        num = current_num + 1
-        max_attempts = 100000
-        while num < current_num + max_attempts:
-            # Use zfill to preserve padding
-            new_filename = f"{prefix}{separator}{str(num).zfill(padding)}{ext}"
-            if not _exists(new_filename):
-                return os.path.join(directory, new_filename)
-            num += 1
-
-        # Fallback: use timestamp
-        import time
-
-        timestamp = int(time.time() * 1000)
-        return os.path.join(directory, f"{prefix}{separator}{timestamp}{ext}")
-
-    # Pattern 2: Check if base ends with a number directly (e.g., image2, render001)
-    direct_number_pattern = re.match(r"^(.+?)(\d+)$", base)
-
-    if direct_number_pattern:
-        prefix = direct_number_pattern.group(1)
-        num_str = direct_number_pattern.group(2)
-        current_num = int(num_str)
-        # Preserve the original padding
-        padding = len(num_str)
-
-        # Find next available number
-        num = current_num + 1
-        max_attempts = 100000
-        while num < current_num + max_attempts:
-            # Use zfill to preserve padding
-            new_filename = f"{prefix}{str(num).zfill(padding)}{ext}"
-            if not _exists(new_filename):
-                return os.path.join(directory, new_filename)
-            num += 1
-
-        # Fallback: use timestamp
-        import time
-
-        timestamp = int(time.time() * 1000)
-        return os.path.join(directory, f"{prefix}{timestamp}{ext}")
-
-    # Pattern 3: No number in filename, start with 1
-    # Try appending number directly: image.png -> image1.png
-    num = 1
-    max_attempts = 100000
-    while num < max_attempts:
-        new_filename = f"{base}{num}{ext}"
-        if not _exists(new_filename):
-            return os.path.join(directory, new_filename)
-        num += 1
-
-    # Ultimate fallback: use timestamp
-    import time
-
-    timestamp = int(time.time() * 1000)
-    return os.path.join(directory, f"{base}_{timestamp}{ext}")
-
-
-def _versioned_sequence_pattern(pattern: str, version: int) -> str:
-    """
-    Insert a _<version> base-name suffix into a %0Nd sequence pattern.
-
-    "render.%04d.exr" -> "render_1.%04d.exr"
-    "render_%04d.exr" -> "render_1_%04d.exr"
-
-    The suffix goes on the base name, before the separator that precedes the
-    frame token, so every frame of a versioned sequence shares one
-    consistent base name.
-    """
-    match = re.search(r"%\d*d", pattern)
-    if match is None:
-        base, ext = os.path.splitext(pattern)
-        return f"{base}_{version}{ext}"
-    insert_at = match.start()
-    if insert_at > 0 and pattern[insert_at - 1] in "._-":
-        insert_at -= 1
-    return f"{pattern[:insert_at]}_{version}{pattern[insert_at:]}"
-
-
-def _warn_stale_frames(
-    sequence_pattern: str, first_frame: int, last_frame: int
-) -> None:
-    """
-    Warn (never delete) about on-disk frames matching a %0Nd sequence
-    pattern whose frame number lies beyond the just-written range — stale
-    leftovers from a longer previous render.
-    """
-    sequence_pattern = sequence_pattern.replace("\\", "/")
-    directory = os.path.dirname(sequence_pattern) or "."
-    basename = os.path.basename(sequence_pattern)
-    match = re.search(r"%\d*d", basename)
-    if match is None:
-        return
-
-    flags = re.IGNORECASE if _is_windows() else 0
-    frame_rx = re.compile(
-        "^"
-        + re.escape(basename[: match.start()])
-        + r"(\d+)"
-        + re.escape(basename[match.end():])
-        + "$",
-        flags,
-    )
-
-    try:
-        entries = os.listdir(directory)
-    except OSError:
-        return
-
-    stale = sorted(
-        int(m.group(1))
-        for f in entries
-        if (m := frame_rx.match(f)) and int(m.group(1)) > last_frame
-    )
-    if stale:
+_OCIO_RESTART_NOTE = (
+    "The list comes from the active OCIO config ($OCIO, or the built-in "
+    "ACES Studio config) and is built when ComfyUI starts - restart "
+    "ComfyUI after changing $OCIO."
+)
+
+
+def _colorspace_choices() -> List[str]:
+    """Combo options for the Read/Write ``colorspace`` input."""
+    if not ocio_config.OCIO_AVAILABLE:
+        return ["raw"]
+    return ["raw"] + ocio_config.colorspace_names()
+
+
+def _resolve_colorspace(colorspace: str, node_tag: str) -> str:
+    """Return the colourspace to use, downgrading to "raw" when OCIO is missing."""
+    if colorspace == "raw":
+        return "raw"
+    if not ocio_config.OCIO_AVAILABLE:
         logger.warning(
-            f"[NukeWrite] {len(stale)} stale frame(s) beyond written range "
-            f"{first_frame}-{last_frame} left in {directory} "
-            f"(e.g. frame {stale[0]}); not deleted"
+            f"[{node_tag}] colorspace '{colorspace}' requested but OpenColorIO is "
+            f"not installed; treating as 'raw' (no conversion)"
         )
+        return "raw"
+    return colorspace
 
 
-# ============================================================================
-# Image I/O Functions
-# ============================================================================
-
-
-def read_image_oiio(filepath: str) -> Optional[np.ndarray]:
-    """Read image using OpenImageIO."""
-    if not OIIO_AVAILABLE:
-        return None
-
-    try:
-        inp = oiio.ImageInput.open(filepath)
-        if inp is None:
-            logger.warning(f"[NukeRead] OIIO error: {oiio.geterror()}")
-            return None
-
-        spec = inp.spec()
-        pixels = inp.read_image("float")
-        inp.close()
-
-        if pixels is None:
-            return None
-
-        # Reshape to (H, W, C)
-        pixels = np.array(pixels, dtype=np.float32)
-        pixels = pixels.reshape(spec.height, spec.width, spec.nchannels)
-
-        return pixels
-    except Exception as e:
-        logger.warning(f"[NukeRead] OIIO error reading {filepath}: {e}")
-        return None
-
-
-def read_image_cv2(filepath: str) -> Optional[np.ndarray]:
-    """Read image using OpenCV."""
-    if not CV2_AVAILABLE:
-        return None
-
-    try:
-        # Read with alpha channel if present
-        img = cv2.imread(filepath, cv2.IMREAD_UNCHANGED)
-        if img is None:
-            return None
-
-        # Convert BGR(A) to RGB(A)
-        if len(img.shape) == 3:
-            if img.shape[2] == 4:
-                img = cv2.cvtColor(img, cv2.COLOR_BGRA2RGBA)
-            elif img.shape[2] == 3:
-                img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-
-        # Normalize to 0-1 range
-        if img.dtype == np.uint8:
-            img = img.astype(np.float32) / 255.0
-        elif img.dtype == np.uint16:
-            img = img.astype(np.float32) / 65535.0
-        else:
-            img = img.astype(np.float32)
-
+def _to_working_space(img: np.ndarray, colorspace: str) -> np.ndarray:
+    """File colourspace -> working space (scene_linear role). Alpha untouched."""
+    if colorspace == "raw":
         return img
-    except Exception as e:
-        logger.warning(f"[NukeRead] OpenCV error reading {filepath}: {e}")
-        return None
+    return ocio_config.apply_transform(img, colorspace, ocio_config.scene_linear_name())
 
 
-def read_image_pil(filepath: str) -> Optional[np.ndarray]:
-    """Read image using PIL."""
-    if not PIL_AVAILABLE:
-        return None
-
-    try:
-        img = PILImage.open(filepath)
-        img = np.array(img, dtype=np.float32)
-
-        # Normalize to 0-1 range
-        if img.max() > 1.0:
-            if img.max() > 255:
-                img /= 65535.0
-            else:
-                img /= 255.0
-
-        # Ensure 3D array (add channel dim if grayscale)
-        if len(img.shape) == 2:
-            img = img[:, :, np.newaxis]
-
+def _from_working_space(img: np.ndarray, colorspace: str) -> np.ndarray:
+    """Working space (scene_linear role) -> file colourspace. Alpha untouched."""
+    if colorspace == "raw":
         return img
-    except Exception as e:
-        logger.warning(f"[NukeRead] PIL error reading {filepath}: {e}")
-        return None
+    return ocio_config.apply_transform(img, ocio_config.scene_linear_name(), colorspace)
 
 
-def read_image(filepath: str) -> Optional[np.ndarray]:
+def _file_colorspace_tag(colorspace: str, file_type: str) -> str:
+    """Value for the ``oiio:ColorSpace`` attribute, or "" to leave it unset.
+
+    Files written in a named colourspace are tagged with it. "raw" EXRs are
+    tagged with the working-space name (linear by convention); other "raw"
+    formats are left untagged so viewers do not misinterpret them.
     """
-    Read an image file using the best available library.
-
-    Priority: OpenImageIO > OpenCV > PIL
-    """
-    if not os.path.exists(filepath):
-        logger.warning(f"[NukeRead] File not found: {filepath}")
-        return None
-
-    # Try OIIO first (best format support)
-    if OIIO_AVAILABLE:
-        img = read_image_oiio(filepath)
-        if img is not None:
-            return img
-
-    # Fallback to OpenCV
-    if CV2_AVAILABLE:
-        img = read_image_cv2(filepath)
-        if img is not None:
-            return img
-
-    # Fallback to PIL
-    if PIL_AVAILABLE:
-        img = read_image_pil(filepath)
-        if img is not None:
-            return img
-
-    logger.error(f"[NukeRead] No library available to read: {filepath}")
-    return None
-
-
-def write_image_oiio(
-    filepath: str,
-    pixels: np.ndarray,
-    bit_depth: str = "16",
-    compression: str = "zip",
-    metadata: Optional[Dict] = None,
-) -> bool:
-    """Write image using OpenImageIO."""
-    if not OIIO_AVAILABLE:
-        return False
-
-    try:
-        height, width = pixels.shape[:2]
-        channels = pixels.shape[2] if len(pixels.shape) > 2 else 1
-
-        # Determine output format based on bit depth
-        if bit_depth == "8":
-            format_type = oiio.UINT8
-            pixels_out = (np.clip(pixels, 0, 1) * 255).astype(np.uint8)
-        elif bit_depth == "16":
-            format_type = oiio.UINT16
-            pixels_out = (np.clip(pixels, 0, 1) * 65535).astype(np.uint16)
-        elif bit_depth == "16f":
-            format_type = oiio.HALF
-            pixels_out = pixels.astype(np.float16)
-        elif bit_depth == "32f":
-            format_type = oiio.FLOAT
-            pixels_out = pixels.astype(np.float32)
-        else:
-            format_type = oiio.UINT16
-            pixels_out = (np.clip(pixels, 0, 1) * 65535).astype(np.uint16)
-
-        # Ensure array is contiguous in memory for OIIO
-        pixels_out = np.ascontiguousarray(pixels_out)
-
-        # Create spec
-        spec = oiio.ImageSpec(width, height, channels, format_type)
-
-        # Set compression for EXR
-        ext = os.path.splitext(filepath)[1].lower()
-        if ext in [".exr"]:
-            spec.attribute("compression", compression)
-        elif ext in [".png"]:
-            spec.attribute("png:compressionLevel", 6)
-        elif ext in [".jpg", ".jpeg"]:
-            spec.attribute("jpeg:quality", 95)
-        elif ext in [".tif", ".tiff"]:
-            if compression == "none":
-                spec.attribute("compression", "none")
-            elif compression in ["lzw", "zip", "deflate"]:
-                spec.attribute("compression", compression)
-        elif ext in [".webp"]:
-            # WebP only supports 8-bit, force conversion
-            format_type = oiio.UINT8
-            pixels_out = (np.clip(pixels, 0, 1) * 255).astype(np.uint8)
-            pixels_out = np.ascontiguousarray(pixels_out)
-            spec = oiio.ImageSpec(width, height, channels, format_type)
-            spec.attribute("webp:quality", 90)
-
-        # Add metadata
-        if metadata:
-            for key, value in metadata.items():
-                spec.attribute(key, value)
-
-        # Create output
-        out = oiio.ImageOutput.create(filepath)
-        if out is None:
-            logger.warning(f"[NukeWrite] OIIO error: {oiio.geterror()}")
-            return False
-
-        # Ensure directory exists
-        os.makedirs(os.path.dirname(filepath) or ".", exist_ok=True)
-
-        if not out.open(filepath, spec):
-            logger.warning(f"[NukeWrite] OIIO error opening: {out.geterror()}")
-            return False
-
-        if not out.write_image(pixels_out):
-            logger.warning(f"[NukeWrite] OIIO error writing: {out.geterror()}")
-            out.close()
-            return False
-
-        out.close()
-        return True
-
-    except Exception as e:
-        logger.warning(f"[NukeWrite] OIIO error writing {filepath}: {e}")
-        return False
-
-
-def write_image_cv2(filepath: str, pixels: np.ndarray, bit_depth: str = "16") -> bool:
-    """Write image using OpenCV."""
-    if not CV2_AVAILABLE:
-        return False
-
-    try:
-        # Ensure directory exists
-        os.makedirs(os.path.dirname(filepath) or ".", exist_ok=True)
-
-        # Convert to output format
-        if bit_depth == "8":
-            pixels_out = (np.clip(pixels, 0, 1) * 255).astype(np.uint8)
-        elif bit_depth == "16":
-            pixels_out = (np.clip(pixels, 0, 1) * 65535).astype(np.uint16)
-        else:
-            pixels_out = (np.clip(pixels, 0, 1) * 65535).astype(np.uint16)
-
-        # Convert RGB(A) to BGR(A)
-        if len(pixels_out.shape) == 3:
-            if pixels_out.shape[2] == 4:
-                pixels_out = cv2.cvtColor(pixels_out, cv2.COLOR_RGBA2BGRA)
-            elif pixels_out.shape[2] == 3:
-                pixels_out = cv2.cvtColor(pixels_out, cv2.COLOR_RGB2BGR)
-
-        return cv2.imwrite(filepath, pixels_out)
-
-    except Exception as e:
-        logger.warning(f"[NukeWrite] OpenCV error writing {filepath}: {e}")
-        return False
-
-
-def write_image_pil(filepath: str, pixels: np.ndarray, bit_depth: str = "8") -> bool:
-    """Write image using PIL."""
-    if not PIL_AVAILABLE:
-        return False
-
-    try:
-        # Ensure directory exists
-        os.makedirs(os.path.dirname(filepath) or ".", exist_ok=True)
-
-        # Convert to 8-bit for PIL
-        pixels_out = (np.clip(pixels, 0, 1) * 255).astype(np.uint8)
-
-        # Remove extra dimensions
-        if len(pixels_out.shape) == 3 and pixels_out.shape[2] == 1:
-            pixels_out = pixels_out[:, :, 0]
-
-        img = PILImage.fromarray(pixels_out)
-        img.save(filepath)
-        return True
-
-    except Exception as e:
-        logger.warning(f"[NukeWrite] PIL error writing {filepath}: {e}")
-        return False
-
-
-def write_image(
-    filepath: str,
-    pixels: np.ndarray,
-    bit_depth: str = "16",
-    compression: str = "zip",
-    metadata: Optional[Dict] = None,
-) -> bool:
-    """
-    Write an image file using the best available library.
-
-    Priority: OpenImageIO > OpenCV > PIL
-    """
-    # Try OIIO first (best format support)
-    if OIIO_AVAILABLE:
-        if write_image_oiio(filepath, pixels, bit_depth, compression, metadata):
-            return True
-
-    # Fallback to OpenCV
-    if CV2_AVAILABLE:
-        if write_image_cv2(filepath, pixels, bit_depth):
-            return True
-
-    # Fallback to PIL
-    if PIL_AVAILABLE:
-        if write_image_pil(filepath, pixels, bit_depth):
-            return True
-
-    logger.error(f"[NukeWrite] No library available to write: {filepath}")
-    return False
-
-
-def get_supported_formats() -> Dict[str, List[str]]:
-    """Get dictionary of supported image formats."""
-    formats = {"read": [], "write": []}
-
-    if OIIO_AVAILABLE:
-        # OIIO supports many formats
-        formats["read"].extend(
-            [
-                "exr",
-                "tif",
-                "tiff",
-                "png",
-                "jpg",
-                "jpeg",
-                "dpx",
-                "cin",
-                "hdr",
-                "rgbe",
-                "tga",
-                "bmp",
-                "psd",
-                "gif",
-                "webp",
-                "heic",
-                "avif",
-                "raw",
-                "cr2",
-                "nef",
-                "arw",
-                "dng",
-                "fits",
-                "sgi",
-                "pic",
-                "pnm",
-                "pbm",
-                "pgm",
-                "ppm",
-                "rla",
-                "iff",
-                "ico",
-            ]
-        )
-        formats["write"].extend(
-            [
-                "exr",
-                "tif",
-                "tiff",
-                "png",
-                "jpg",
-                "jpeg",
-                "dpx",
-                "hdr",
-                "tga",
-                "bmp",
-                "webp",
-                "pnm",
-                "pbm",
-                "pgm",
-                "ppm",
-            ]
-        )
-
-    if CV2_AVAILABLE:
-        cv2_formats = ["png", "jpg", "jpeg", "tif", "tiff", "bmp", "webp"]
-        formats["read"].extend(cv2_formats)
-        formats["write"].extend(cv2_formats)
-
-    if PIL_AVAILABLE:
-        pil_formats = ["png", "jpg", "jpeg", "gif", "bmp", "tga", "webp"]
-        formats["read"].extend(pil_formats)
-        formats["write"].extend(pil_formats)
-
-    # Remove duplicates
-    formats["read"] = sorted(set(formats["read"]))
-    formats["write"] = sorted(set(formats["write"]))
-
-    return formats
-
-
-# ============================================================================
-# Preview Utilities
-# ============================================================================
-
-
-def resize_image_oiio(img_np: np.ndarray, max_size: int = 256) -> np.ndarray:
-    """
-    Resize image using OpenImageIO's ImageBufAlgo.
-
-    Args:
-        img_np: Image as numpy array (H, W, C)
-        max_size: Maximum dimension
-
-    Returns:
-        Resized image as numpy array
-    """
-    if not OIIO_AVAILABLE:
-        # Fallback to simple numpy resize (nearest neighbor)
-        height, width = img_np.shape[:2]
-        if width <= max_size and height <= max_size:
-            return img_np
-
-        if width > height:
-            new_width = max_size
-            new_height = int(height * max_size / width)
-        else:
-            new_height = max_size
-            new_width = int(width * max_size / height)
-
-        # Simple nearest neighbor resize
-        import cv2 as cv2_resize
-
-        if CV2_AVAILABLE:
-            return cv2_resize.resize(
-                img_np, (new_width, new_height), interpolation=cv2_resize.INTER_LANCZOS4
-            )
-        else:
-            # Very basic resize using numpy
-            y_indices = np.linspace(0, height - 1, new_height).astype(int)
-            x_indices = np.linspace(0, width - 1, new_width).astype(int)
-            return img_np[np.ix_(y_indices, x_indices)]
-
-    height, width = img_np.shape[:2]
-    channels = img_np.shape[2] if len(img_np.shape) > 2 else 1
-
-    if width <= max_size and height <= max_size:
-        return img_np
-
-    # Calculate new dimensions maintaining aspect ratio
-    if width > height:
-        new_width = max_size
-        new_height = int(height * max_size / width)
-    else:
-        new_height = max_size
-        new_width = int(width * max_size / height)
-
-    # Create ImageBuf from numpy array
-    spec = oiio.ImageSpec(width, height, channels, oiio.FLOAT)
-    src_buf = oiio.ImageBuf(spec)
-    # Ensure array is contiguous in memory for OIIO
-    pixels_contiguous = np.ascontiguousarray(img_np.astype(np.float32))
-    src_buf.set_pixels(
-        oiio.ROI(0, width, 0, height, 0, 1, 0, channels), pixels_contiguous
-    )
-
-    # Resize using OIIO
-    dst_buf = oiio.ImageBufAlgo.resize(
-        src_buf, roi=oiio.ROI(0, new_width, 0, new_height, 0, 1, 0, channels)
-    )
-
-    # Get pixels back
-    resized = dst_buf.get_pixels(oiio.FLOAT)
-    return resized.reshape(new_height, new_width, channels)
-
-
-def save_preview_oiio(img_np: np.ndarray, filepath: str) -> bool:
-    """
-    Save preview image using OpenImageIO.
-
-    Args:
-        img_np: Image as numpy array (H, W, C) in 0-1 range float or 0-255 uint8
-        filepath: Output filepath (should be .png or .jpg)
-
-    Returns:
-        True if successful
-    """
-    if not OIIO_AVAILABLE:
-        # Fallback to OpenCV
-        if CV2_AVAILABLE:
-            # Ensure uint8
-            if img_np.dtype != np.uint8:
-                img_np = np.clip(img_np * 255, 0, 255).astype(np.uint8)
-            # Convert RGB to BGR for OpenCV
-            if len(img_np.shape) == 3 and img_np.shape[2] >= 3:
-                img_np = cv2.cvtColor(img_np, cv2.COLOR_RGB2BGR)
-            return cv2.imwrite(filepath, img_np)
-        return False
-
-    height, width = img_np.shape[:2]
-    channels = img_np.shape[2] if len(img_np.shape) > 2 else 1
-
-    # Convert to uint8 for PNG output
-    if img_np.dtype == np.float32 or img_np.dtype == np.float64:
-        pixels_out = np.clip(img_np * 255, 0, 255).astype(np.uint8)
-    else:
-        pixels_out = img_np.astype(np.uint8)
-
-    # Ensure array is contiguous in memory for OIIO
-    pixels_out = np.ascontiguousarray(pixels_out)
-
-    # Create spec and output
-    spec = oiio.ImageSpec(width, height, channels, oiio.UINT8)
-    spec.attribute("png:compressionLevel", 6)
-
-    out = oiio.ImageOutput.create(filepath)
-    if out is None:
-        return False
-
-    if not out.open(filepath, spec):
-        return False
-
-    if not out.write_image(pixels_out):
-        out.close()
-        return False
-
-    out.close()
-    return True
-
-
-def create_preview_images(
-    images: torch.Tensor, max_size: int = 256, max_frames: int = 1000
-) -> list:
-    """
-    Create preview images for display in the node UI.
-    Uses OpenImageIO for image processing and saving.
-
-    Args:
-        images: Tensor of images (B, H, W, C)
-        max_size: Maximum dimension for preview thumbnails
-        max_frames: Maximum number of frames to include in preview
-
-    Returns:
-        List of preview dictionaries for ComfyUI UI
-    """
-    previews = []
-    batch_size = images.shape[0]
-
-    # Limit number of frames for preview
-    frame_step = max(1, batch_size // max_frames)
-
-    # Get temp directory
-    temp_dir = folder_paths.get_temp_directory()
-    os.makedirs(temp_dir, exist_ok=True)
-
-    for i in range(0, batch_size, frame_step):
-        if len(previews) >= max_frames:
-            break
-
-        img_tensor = images[i]
-        img_np = img_tensor.cpu().numpy()
-
-        # Ensure we have 3 channels (RGB)
-        if img_np.shape[-1] == 4:
-            # RGBA -> RGB (discard alpha for preview)
-            img_np = img_np[:, :, :3]
-        elif img_np.shape[-1] == 1:
-            # Grayscale -> RGB
-            img_np = np.concatenate([img_np, img_np, img_np], axis=-1)
-
-        # Resize using OIIO
-        img_np = resize_image_oiio(img_np, max_size)
-
-        # Save to temporary file
-        preview_filename = f"nuke_preview_{id(images)}_{i}.png"
-        preview_path = os.path.join(temp_dir, preview_filename)
-
-        if save_preview_oiio(img_np, preview_path):
-            previews.append(
-                {
-                    "filename": preview_filename,
-                    "subfolder": "",
-                    "type": "temp",
-                    "frame": i + 1,
-                }
-            )
-
-    return previews
-
-
-def save_preview_to_temp(img_np: np.ndarray, suffix: str = "") -> dict:
-    """
-    Save a single numpy image to temp directory for preview.
-    Uses OpenImageIO for image processing and saving.
-
-    Args:
-        img_np: Image as numpy array (H, W, C) in 0-1 range
-        suffix: Optional suffix for filename
-
-    Returns:
-        Preview dictionary for ComfyUI UI
-    """
-    import uuid
-
-    # Ensure we have 3 channels (RGB)
-    if len(img_np.shape) == 2:
-        img_np = np.stack([img_np, img_np, img_np], axis=-1)
-    elif img_np.shape[-1] == 4:
-        img_np = img_np[:, :, :3]
-    elif img_np.shape[-1] == 1:
-        img_np = np.concatenate([img_np, img_np, img_np], axis=-1)
-
-    # Resize for preview (max 256px)
-    img_np = resize_image_oiio(img_np, max_size=256)
-
-    # Save to temp directory
-    temp_dir = folder_paths.get_temp_directory()
-    os.makedirs(temp_dir, exist_ok=True)
-    preview_filename = f"nuke_preview_{uuid.uuid4().hex[:8]}{suffix}.png"
-    preview_path = os.path.join(temp_dir, preview_filename)
-
-    if save_preview_oiio(img_np, preview_path):
-        return {"filename": preview_filename, "subfolder": "", "type": "temp"}
-
-    return None
+    if colorspace != "raw":
+        return colorspace
+    if file_type == "exr":
+        return ocio_config.scene_linear_name()
+    return ""
 
 
 # ============================================================================
@@ -1289,26 +183,20 @@ class NukeRead(NukeNodeBase):
                     {"default": "black"},
                 ),
                 "colorspace": (
-                    ["raw", "sRGB", "linear", "ACEScg"],
+                    _colorspace_choices(),
                     {
                         "default": "raw",
                         "tooltip": (
-                            "Colorspace the FILE IS IN on disk "
-                            "(matches Nuke's Read node convention). "
-                            "The node decodes from this into linear "
-                            "Rec.709 working space.\n\n"
-                            "  raw    - no conversion (downstream "
-                            "nodes will handle decoding)\n"
-                            "  sRGB   - file is sRGB-encoded (PNG / "
-                            "JPG); apply IEC 61966-2-1 EOTF to decode "
-                            "-> linear Rec.709\n"
-                            "  linear - file is already linear "
-                            "Rec.709 (EXR); no conversion\n"
-                            "  ACEScg - file is linear ACEScg (AP1 "
-                            "primaries); apply no-CAT AP1 -> Rec.709 "
-                            "primary matrix (matches Nuke nuke-default; "
-                            "strict ACEScg is D60 but legacy mapping "
-                            "treats both as D65 for clean round-trips)"
+                            "Colorspace the FILE IS IN on disk (matches Nuke's "
+                            "Read node convention). The node converts from this "
+                            "into the OCIO working space (the config's "
+                            "scene_linear role, e.g. ACEScg).\n\n"
+                            "  raw - no conversion (pixels are passed through "
+                            "as stored)\n"
+                            "  any other entry - OCIO colourspace the file is "
+                            "encoded in (e.g. 'sRGB Encoded Rec.709 (sRGB)' for "
+                            "PNG / JPG, 'ACEScg' for linear EXR)\n\n"
+                            + _OCIO_RESTART_NOTE
                         ),
                     },
                 ),
@@ -1443,6 +331,14 @@ class NukeRead(NukeNodeBase):
         logger.info(f"[NukeRead] Loading path: {file_path}")
         logger.info(f"[NukeRead] Load as sequence: {load_as_sequence}")
 
+        # Resolve colour handling once (warns if OCIO is missing)
+        colorspace = _resolve_colorspace(colorspace, "NukeRead")
+        if colorspace != "raw":
+            logger.info(
+                f"[NukeRead] Colorspace: '{colorspace}' -> "
+                f"'{ocio_config.scene_linear_name()}' (working space)"
+            )
+
         # Parse frame pattern
         pattern, frame_spec, padding = parse_frame_pattern(file_path)
 
@@ -1499,6 +395,9 @@ class NukeRead(NukeNodeBase):
                 actual_path = file_path
 
             img = None
+            # True when `img` did not come from disk (black fill or a held
+            # copy of an already-converted frame) and must not be converted.
+            in_working_space = False
 
             if os.path.exists(actual_path):
                 img = read_image(actual_path)
@@ -1507,8 +406,9 @@ class NukeRead(NukeNodeBase):
                 if missing_frames == "error":
                     logger.error(f"[NukeRead] Frame not found: {actual_path}")
                 elif missing_frames == "hold" and images:
-                    # Use previous frame
-                    img = images[-1].copy() if images else None
+                    # Use previous frame (already in working space)
+                    img = images[-1].copy()
+                    in_working_space = True
                 elif missing_frames == "nearest" and available_frames:
                     # Find nearest available frame
                     nearest = min(available_frames, key=lambda x: abs(x - f))
@@ -1522,6 +422,7 @@ class NukeRead(NukeNodeBase):
                     img = np.zeros(reference_shape, dtype=np.float32)
                 else:
                     img = np.zeros((512, 512, 3), dtype=np.float32)
+                in_working_space = True
             else:
                 if reference_shape is None:
                     reference_shape = img.shape
@@ -1532,33 +433,11 @@ class NukeRead(NukeNodeBase):
             elif img.shape[2] == 1:
                 img = np.concatenate([img, img, img], axis=-1)
 
-            # Apply colorspace conversion to bring the file into Nuke-style
-            # linear working space.
-            #
-            # Convention (matches Nuke's Read node): the `colorspace`
-            # parameter describes what colorspace the FILE IS IN on disk,
-            # and the node decodes from that into linear. So a normal sRGB
-            # PNG should be loaded with colorspace="sRGB" — we apply the
-            # IEC 61966-2-1 EOTF to decode the encoded values to linear.
-            #
-            # Math: same piecewise formula nuke-default's srgb.spi1d LUT
-            # is generated from (imageworks/OpenColorIO-Configs).
-            if colorspace == "sRGB":
-                # File is sRGB-encoded; decode to linear.
-                img = np.where(
-                    img <= 0.04045,
-                    img / 12.92,
-                    np.power(np.clip((img + 0.055) / 1.055, 0.0, None), 2.4),
-                )
-            elif colorspace == "linear":
-                # File is already linear Rec.709; no conversion.
-                pass
-            elif colorspace == "ACEScg":
-                # File is linear ACEScg (AP1 primaries). Convert to
-                # linear Rec.709 working space via the no-CAT primary
-                # matrix (matches Nuke's nuke-default convention).
-                img = _apply_primary_matrix(img, _M_AP1_TO_REC709)
-            # colorspace == "raw": pass through with no conversion.
+            # Convention (matches Nuke's Read node): `colorspace` describes
+            # what colourspace the FILE IS IN on disk; OCIO converts from
+            # that into the config's scene_linear working space.
+            if not in_working_space:
+                img = _to_working_space(img, colorspace)
 
             images.append(img)
 
@@ -1697,27 +576,21 @@ class NukeWrite(NukeNodeBase):
                 ),
                 "create_directories": ("BOOLEAN", {"default": True}),
                 "colorspace": (
-                    ["raw", "sRGB", "linear", "ACEScg"],
+                    _colorspace_choices(),
                     {
                         "default": "raw",
                         "tooltip": (
-                            "Colorspace to WRITE the file as on disk "
-                            "(matches Nuke's Write node convention). "
-                            "Input is assumed to be in linear Rec.709 "
-                            "working space; the node encodes from "
-                            "linear Rec.709 to the chosen output "
-                            "space.\n\n"
-                            "  raw    - write input as-is, no conversion\n"
-                            "  sRGB   - encode linear Rec.709 -> sRGB "
-                            "via IEC 61966-2-1 OETF (typical for PNG / "
-                            "JPG)\n"
-                            "  linear - write linear Rec.709, no "
-                            "conversion (typical for EXR)\n"
-                            "  ACEScg - encode Rec.709 -> ACEScg (AP1 "
-                            "primaries) via no-CAT primary matrix "
-                            "(matches Nuke nuke-default; strict "
-                            "ACEScg is D60 but legacy mapping treats "
-                            "both as D65 for clean round-trips)"
+                            "Colorspace to WRITE the file as on disk (matches "
+                            "Nuke's Write node convention). Input is assumed to "
+                            "be in the OCIO working space (the config's "
+                            "scene_linear role, e.g. ACEScg); the node converts "
+                            "from there into the chosen space.\n\n"
+                            "  raw - write input as-is, no conversion (EXRs are "
+                            "tagged with the working-space name)\n"
+                            "  any other entry - OCIO colourspace to encode to "
+                            "(e.g. 'sRGB Encoded Rec.709 (sRGB)' for PNG / JPG, "
+                            "'ACEScg' for linear EXR)\n\n"
+                            + _OCIO_RESTART_NOTE
                         ),
                     },
                 ),
@@ -1755,6 +628,9 @@ class NukeWrite(NukeNodeBase):
         if not file_path:
             logger.warning("[NukeWrite] No file path specified")
             return {"ui": {"images": []}, "result": (image, "")}
+
+        # Resolve colour handling once (warns if OCIO is missing)
+        colorspace = _resolve_colorspace(colorspace, "NukeWrite")
 
         # Branch to multi-pass writer if requested
         if channels == "all_channels":
@@ -1887,51 +763,32 @@ class NukeWrite(NukeNodeBase):
                 f"sequence with base suffix _{version}"
             )
 
+        # Prepare metadata. "raw" EXRs are tagged with the working-space
+        # name (linear by convention); other "raw" formats stay untagged so
+        # viewers do not misinterpret them (e.g. a PNG tagged linear).
+        metadata = {
+            "Software": "ComfyUI Nuke Nodes",
+        }
+        colorspace_tag = _file_colorspace_tag(colorspace, file_type)
+        if colorspace_tag:
+            metadata["oiio:ColorSpace"] = colorspace_tag
+
+        if colorspace != "raw":
+            logger.info(
+                f"[NukeWrite] Colorspace: '{ocio_config.scene_linear_name()}' "
+                f"(working space) -> '{colorspace}'"
+            )
+
         for i in range(batch_size):
             output_path = target_paths[i]
 
             # Get pixel data
             pixels = img[i].cpu().numpy()
 
-            # Apply colorspace conversion before writing to disk.
-            #
-            # Convention (matches Nuke's Write node): the `colorspace`
-            # parameter describes what colorspace to write the FILE AS
-            # on disk. Input is assumed to be in Nuke-style linear
-            # working space, and we encode from linear to the chosen
-            # output space.
-            #
-            # Math: IEC 61966-2-1 OETF for sRGB. Same formula
-            # nuke-default's srgb.spi1d LUT is generated from.
-            if colorspace == "sRGB":
-                # Encode linear -> sRGB for writing.
-                pixels = np.where(
-                    pixels <= 0.0031308,
-                    pixels * 12.92,
-                    1.055 * np.power(np.clip(pixels, 0.0031308, None), 1 / 2.4) - 0.055,
-                )
-            elif colorspace == "linear":
-                # Write linear Rec.709, no conversion.
-                pass
-            elif colorspace == "ACEScg":
-                # Encode linear Rec.709 -> linear ACEScg (AP1 primaries)
-                # via the no-CAT primary matrix, matching Nuke's
-                # nuke-default behavior. Strict ACEScg is D60 but the
-                # legacy / no-CAT mapping treats both as D65 to keep
-                # round-trips bit-exact.
-                pixels = _apply_primary_matrix(pixels, _M_REC709_TO_AP1)
-            # colorspace == "raw": write the input as-is, no conversion.
-
-            # Prepare metadata
-            # RAW: only tag EXR as linear (convention), skip for other formats
-            # to avoid misleading viewers (e.g., PNG tagged linear displays too bright)
-            metadata = {
-                "Software": "ComfyUI Nuke Nodes",
-            }
-            if colorspace != "raw":
-                metadata["oiio:ColorSpace"] = colorspace
-            elif file_type == "exr":
-                metadata["oiio:ColorSpace"] = "linear"
+            # Convention (matches Nuke's Write node): `colorspace` describes
+            # what colourspace to write the FILE AS on disk. Input is in the
+            # OCIO working space; OCIO converts to the chosen output space.
+            pixels = _from_working_space(pixels, colorspace)
 
             # Write the image
             if overwrite:
@@ -2009,7 +866,7 @@ class NukeWrite(NukeNodeBase):
 
         Colorspace conversion is applied only to light/beauty passes, not to
         data passes (normals, depth, position, motion, IDs, mattes, UVs) —
-        those are scene-referred data and must not be gamma-transformed.
+        those are scene-referred data and must not be colour-transformed.
         """
         if not OIIO_AVAILABLE:
             raise RuntimeError(
@@ -2109,25 +966,12 @@ class NukeWrite(NukeNodeBase):
 
             # Resolution mismatch safeguard (shouldn't normally happen)
             if (pH, pW) != (H, W):
-                import cv2
-                arr = cv2.resize(arr, (W, H), interpolation=cv2.INTER_LINEAR)
-                if arr.ndim == 2:
-                    arr = arr[..., np.newaxis]
+                arr = _resize_pass(arr, H, W)
 
             # Apply colorspace conversion ONLY to color passes, not data passes.
             # Alpha channels within a color pass are also passed through unchanged.
             if colorspace != "raw" and not is_data_pass(pass_name):
-                # Separate color (first 3) from alpha (rest) if applicable
-                if C == 4:
-                    color = arr[..., :3]
-                    alpha = arr[..., 3:]
-                    color = _apply_write_colorspace(color, colorspace)
-                    arr = np.concatenate([color, alpha], axis=-1)
-                elif C == 3:
-                    arr = _apply_write_colorspace(arr, colorspace)
-                elif C == 1:
-                    # Single-channel color (rare) — apply as-is
-                    arr = _apply_write_colorspace(arr, colorspace)
+                arr = _convert_pass(arr, colorspace)
 
             # Naming: top-level RGBA, otherwise passname.<suffix>
             suffixes = channel_suffix_for_pass(pass_name, C)
@@ -2160,10 +1004,7 @@ class NukeWrite(NukeNodeBase):
         spec.channelnames = tuple(channel_names)
         spec.attribute("compression", compression)
         spec.attribute("Software", "ComfyUI Nuke Nodes")
-        if colorspace != "raw":
-            spec.attribute("oiio:ColorSpace", colorspace)
-        else:
-            spec.attribute("oiio:ColorSpace", "linear")
+        spec.attribute("oiio:ColorSpace", _file_colorspace_tag(colorspace, "exr"))
 
         if overwrite:
             # Atomic overwrite: write to a temp file in the same directory
@@ -2218,18 +1059,32 @@ class NukeWrite(NukeNodeBase):
         return {"ui": {"images": ui_images}, "result": (image, output_path)}
 
 
-def _apply_write_colorspace(arr: np.ndarray, colorspace: str) -> np.ndarray:
-    """Apply the same write-time colorspace encoding used in write_image,
-    but to an arbitrary [H, W, 3] array (no batch dim)."""
-    if colorspace == "sRGB":
-        return np.where(
-            arr <= 0.0031308,
-            arr * 12.92,
-            1.055 * np.power(np.clip(arr, 0.0031308, None), 1 / 2.4) - 0.055,
-        )
-    if colorspace == "ACEScg":
-        return _apply_primary_matrix(arr, _M_REC709_TO_AP1)
-    return arr  # raw / linear
+def _resize_pass(arr: np.ndarray, height: int, width: int) -> np.ndarray:
+    """Bilinear-resize one (H, W, C) pass to (height, width)."""
+    if cv2 is not None:
+        out = cv2.resize(arr, (width, height), interpolation=cv2.INTER_LINEAR)
+        if out.ndim == 2:
+            out = out[..., np.newaxis]
+        return np.ascontiguousarray(out, dtype=np.float32)
+    t = torch.from_numpy(np.ascontiguousarray(arr)).permute(2, 0, 1).unsqueeze(0)
+    t = F.interpolate(t, size=(height, width), mode="bilinear", align_corners=False)
+    return np.ascontiguousarray(t.squeeze(0).permute(1, 2, 0).numpy(), dtype=np.float32)
+
+
+def _convert_pass(arr: np.ndarray, colorspace: str) -> np.ndarray:
+    """Working space -> ``colorspace`` for one light pass (H, W, C).
+
+    RGB / RGBA passes go through OCIO directly (alpha is preserved). A
+    single-channel light pass is converted as a grey triplet and the first
+    channel kept. Two-channel passes are left alone (no colour meaning).
+    """
+    C = arr.shape[-1]
+    if C in (3, 4):
+        return _from_working_space(arr, colorspace)
+    if C == 1:
+        grey = np.repeat(arr, 3, axis=-1)
+        return np.ascontiguousarray(_from_working_space(grey, colorspace)[..., :1])
+    return arr
 
 
 class NukeReadInfo(NukeNodeBase):
@@ -2327,27 +1182,28 @@ class NukeReadInfo(NukeNodeBase):
                             info += f"Color Space: {colorspace}\n"
 
                         inp.close()
+                    else:
+                        info += f"OpenImageIO could not open file: {oiio.geterror()}\n"
                 except Exception as e:
                     info += f"Error reading metadata: {e}\n"
-            elif CV2_AVAILABLE:
-                try:
-                    img = cv2.imread(sample_path, cv2.IMREAD_UNCHANGED)
-                    if img is not None:
-                        info += f"Resolution: {img.shape[1]} x {img.shape[0]}\n"
-                        info += (
-                            f"Channels: {img.shape[2] if len(img.shape) > 2 else 1}\n"
-                        )
-                        info += f"Bit Depth: {img.dtype}\n"
-                except Exception as e:
-                    info += f"Error reading metadata: {e}\n"
+            else:
+                info += "Image metadata unavailable: OpenImageIO is not installed\n"
         else:
             info += f"\nFile not found: {sample_path}\n"
 
         # Show available libraries
         info += f"\n=== I/O LIBRARIES ===\n"
-        info += f"OpenImageIO: {'Available' if OIIO_AVAILABLE else 'Not installed'}\n"
-        info += f"OpenCV: {'Available' if CV2_AVAILABLE else 'Not installed'}\n"
-        info += f"PIL: {'Available' if PIL_AVAILABLE else 'Not installed'}\n"
+        if OIIO_AVAILABLE:
+            version = oiio_version()
+            info += f"OpenImageIO: Available{' (' + version + ')' if version else ''}\n"
+        else:
+            info += "OpenImageIO: Not installed (required by nuke-nodes 2.x)\n"
+        if ocio_config.OCIO_AVAILABLE:
+            info += f"OpenColorIO: Available ({ocio_config.OCIO_VERSION})\n"
+            info += f"OCIO config: {ocio_config.config_source()}\n"
+            info += f"Working space: {ocio_config.scene_linear_name()}\n"
+        else:
+            info += "OpenColorIO: Not installed (colorspace conversion disabled)\n"
 
         # Show supported formats
         formats = get_supported_formats()

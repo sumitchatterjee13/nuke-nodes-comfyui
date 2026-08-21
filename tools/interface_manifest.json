@@ -75,7 +75,7 @@
   },
   "inputs_optional": {
    "mask": {
-    "type": "IMAGE",
+    "type": "MASK",
     "config": {}
    }
   },
@@ -383,7 +383,7 @@
   "output_node": false,
   "has_is_changed": false,
   "has_validate": false,
-  "doc": "Four-corner perspective transformation node with proper transparency",
+  "doc": "Four-corner perspective transformation node with proper transparency.\n\n    The four source image corners are pinned to the ``to1..to4`` destination\n    corners (normalised 0..1, Nuke's bottom-left origin: to1 = bottom-left,\n    to2 = bottom-right, to3 = top-right, to4 = top-left). A true homography\n    is solved from the four corner pairs, inverted, and every output pixel\n    centre is resampled from its source position through ``remap_image``.\n    Pixels outside the pinned quad are transparent black.",
   "inputs_required": {
    "image": {
     "type": "IMAGE",
@@ -463,11 +463,13 @@
    },
    "filter": {
     "type": [
-     "nearest",
-     "bilinear"
+     "impulse",
+     "cubic",
+     "lanczos",
+     "area"
     ],
     "config": {
-     "default": "bilinear"
+     "default": "cubic"
     }
    }
   },
@@ -620,7 +622,7 @@
   },
   "inputs_optional": {
    "depth_map": {
-    "type": "IMAGE",
+    "type": "MASK",
     "config": {}
    },
    "focus_distance": {
@@ -633,6 +635,43 @@
     }
    }
   },
+  "inputs_hidden": {}
+ },
+ "NukeDissolve": {
+  "class": "NukeDissolve",
+  "module": "merge_nodes",
+  "display_name": "Nuke Dissolve",
+  "category": "Nuke/Merge",
+  "function": "dissolve",
+  "return_types": [
+   "IMAGE"
+  ],
+  "return_names": null,
+  "output_node": false,
+  "has_is_changed": false,
+  "has_validate": false,
+  "doc": "Dissolve between two images, matching Nuke's Dissolve node.\n\n    which = 0 returns A, which = 1 returns B, intermediate values blend linearly.",
+  "inputs_required": {
+   "A": {
+    "type": "IMAGE",
+    "config": {}
+   },
+   "B": {
+    "type": "IMAGE",
+    "config": {}
+   },
+   "which": {
+    "type": "FLOAT",
+    "config": {
+     "default": 0.0,
+     "min": 0.0,
+     "max": 1.0,
+     "step": 0.01,
+     "tooltip": "0 = A, 1 = B"
+    }
+   }
+  },
+  "inputs_optional": {},
   "inputs_hidden": {}
  },
  "NukeExposure": {
@@ -648,87 +687,7 @@
   "output_node": false,
   "has_is_changed": false,
   "has_validate": false,
-  "doc": "Exposure adjustment node that replicates Nuke's Exposure node functionality",
-  "inputs_required": {
-   "image": {
-    "type": "IMAGE",
-    "config": {}
-   },
-   "stops": {
-    "type": "FLOAT",
-    "config": {
-     "default": 0.0,
-     "min": -10.0,
-     "max": 10.0,
-     "step": 0.1
-    }
-   },
-   "exposure_type": {
-    "type": [
-     "stops",
-     "printer_lights",
-     "film_density"
-    ],
-    "config": {
-     "default": "stops"
-    }
-   },
-   "multiply": {
-    "type": "FLOAT",
-    "config": {
-     "default": 1.0,
-     "min": 0.0,
-     "max": 10.0,
-     "step": 0.01
-    }
-   },
-   "offset": {
-    "type": "FLOAT",
-    "config": {
-     "default": 0.0,
-     "min": -1.0,
-     "max": 1.0,
-     "step": 0.01
-    }
-   },
-   "clamp_output": {
-    "type": "BOOLEAN",
-    "config": {
-     "default": true
-    }
-   },
-   "mix": {
-    "type": "FLOAT",
-    "config": {
-     "default": 1.0,
-     "min": 0.0,
-     "max": 1.0,
-     "step": 0.01
-    }
-   }
-  },
-  "inputs_optional": {
-   "mask": {
-    "type": "IMAGE",
-    "config": {}
-   }
-  },
-  "inputs_hidden": {}
- },
- "NukeExposureAdvanced": {
-  "class": "NukeExposureAdvanced",
-  "module": "grade_nodes",
-  "display_name": "Nuke Exposure Advanced",
-  "category": "Nuke/Color",
-  "function": "adjust_exposure_advanced",
-  "return_types": [
-   "IMAGE"
-  ],
-  "return_names": null,
-  "output_node": false,
-  "has_is_changed": false,
-  "has_validate": false,
-  "doc": "Advanced exposure node with separate RGB channel controls",
+  "doc": "Exposure adjustment node that replicates Nuke's Exposure node functionality,\n    with master stops plus per-channel stop offsets.",
   "inputs_required": {
    "image": {
     "type": "IMAGE",
@@ -780,6 +739,24 @@
      "default": "stops"
     }
    },
+   "multiply": {
+    "type": "FLOAT",
+    "config": {
+     "default": 1.0,
+     "min": 0.0,
+     "max": 10.0,
+     "step": 0.01
+    }
+   },
+   "offset": {
+    "type": "FLOAT",
+    "config": {
+     "default": 0.0,
+     "min": -1.0,
+     "max": 1.0,
+     "step": 0.01
+    }
+   },
    "preserve_highlights": {
     "type": "BOOLEAN",
     "config": {
@@ -804,7 +781,7 @@
   },
   "inputs_optional": {
    "mask": {
-    "type": "IMAGE",
+    "type": "MASK",
     "config": {}
    }
   },
@@ -1013,7 +990,7 @@
   },
   "inputs_optional": {
    "mask": {
-    "type": "IMAGE",
+    "type": "MASK",
     "config": {}
    }
   },
@@ -1220,42 +1197,6 @@
   },
   "inputs_hidden": {}
  },
- "NukeMix": {
-  "class": "NukeMix",
-  "module": "merge_nodes",
-  "display_name": "Nuke Mix",
-  "category": "Nuke/Merge",
-  "function": "mix",
-  "return_types": [
-   "IMAGE"
-  ],
-  "return_names": null,
-  "output_node": false,
-  "has_is_changed": false,
-  "has_validate": false,
-  "doc": "Simple mix node for blending two images with a factor",
-  "inputs_required": {
-   "image_a": {
-    "type": "IMAGE",
-    "config": {}
-   },
-   "image_b": {
-    "type": "IMAGE",
-    "config": {}
-   },
-   "mix": {
-    "type": "FLOAT",
-    "config": {
-     "default": 0.5,
-     "min": 0.0,
-     "max": 1.0,
-     "step": 0.01
-    }
-   }
-  },
-  "inputs_optional": {},
-  "inputs_hidden": {}
- },
  "NukeMotionBlur": {
   "class": "NukeMotionBlur",
   "module": "blur_nodes",
@@ -1346,142 +1287,154 @@
   "output_node": false,
   "has_is_changed": false,
   "has_validate": false,
-  "doc": "OCIO Color Space transformation node, similar to Nuke's OCIOColorSpace.\n\n    Transforms images between color spaces using OpenColorIO.\n    Supports ACES 2.0 (built-in) and custom OCIO configurations.\n\n    Requirements:\n        pip install opencolorio\n\n    OpenColorIO 2.5+ includes built-in ACES configs:\n    - ACES 2.0 CG Config (recommended for VFX/CG)\n    - ACES 2.0 Studio Config (full camera/display support)\n    - ACES 1.3 configs also available\n\n    No external config files needed!",
+  "doc": "OCIO colourspace transform, similar to Nuke's OCIOColorSpace.\n\n    Converts between any two colourspaces (or roles, listed as ``role:<name>``)\n    of the active OCIO config - ``$OCIO`` if set, otherwise OCIO's built-in\n    ACES Studio config. Alpha is passed through untouched.\n\n    Requirements:\n        pip install opencolorio",
   "inputs_required": {
    "image": {
     "type": "IMAGE",
     "config": {}
    },
-   "config": {
-    "type": [
-     "ACES 2.0 Studio Config"
-    ],
-    "config": {
-     "default": "ACES 2.0 Studio Config"
-    }
-   },
    "in_colorspace": {
     "type": [
+     "sRGB - Display",
+     "Gamma 2.2 Rec.709 - Display",
+     "Display P3 - Display",
+     "Display P3 HDR - Display",
+     "P3-D65 - Display",
+     "Rec.1886 Rec.709 - Display",
+     "Rec.2100-HLG - Display",
+     "Rec.2100-PQ - Display",
+     "ST2084-P3-D65 - Display",
      "ACES2065-1",
      "ACEScc",
      "ACEScct",
      "ACEScg",
      "ADX10",
      "ADX16",
-     "ARRI LogC3 (EI800)",
-     "ARRI LogC4",
      "Apple Log",
+     "ARRI LogC3 (EI800)",
+     "Linear ARRI Wide Gamut 3",
+     "ARRI LogC4",
+     "Linear ARRI Wide Gamut 4",
      "BMDFilm WideGamut Gen5",
-     "Camera Rec.709",
+     "Linear BMD WideGamut Gen5",
+     "DaVinci Intermediate WideGamut",
+     "Linear DaVinci WideGamut",
      "CanonLog2 CinemaGamut D55",
+     "Linear CinemaGamut D55",
      "CanonLog3 CinemaGamut D55",
      "D-Log D-Gamut",
-     "DaVinci Intermediate WideGamut",
-     "Display P3 - Display",
-     "Display P3 HDR - Display",
-     "Gamma 1.8 Encoded Rec.709",
-     "Gamma 2.2 Encoded AP1",
-     "Gamma 2.2 Encoded AdobeRGB",
-     "Gamma 2.2 Encoded Rec.709",
-     "Gamma 2.2 Rec.709 - Display",
-     "Gamma 2.4 Encoded Rec.709",
-     "Linear ARRI Wide Gamut 3",
-     "Linear ARRI Wide Gamut 4",
-     "Linear AdobeRGB",
-     "Linear BMD WideGamut Gen5",
-     "Linear CinemaGamut D55",
      "Linear D-Gamut",
-     "Linear DaVinci WideGamut",
-     "Linear P3-D65",
-     "Linear REDWideGamutRGB",
-     "Linear Rec.2020",
-     "Linear Rec.709 (sRGB)",
-     "Linear S-Gamut3",
-     "Linear S-Gamut3.Cine",
+     "V-Log V-Gamut",
      "Linear V-Gamut",
-     "Linear Venice S-Gamut3",
-     "Linear Venice S-Gamut3.Cine",
      "Log3G10 REDWideGamutRGB",
-     "P3-D65 - Display",
-     "Raw",
-     "Rec.1886 Rec.709 - Display",
-     "Rec.2100-HLG - Display",
-     "Rec.2100-PQ - Display",
+     "Linear REDWideGamutRGB",
      "S-Log3 S-Gamut3",
      "S-Log3 S-Gamut3.Cine",
      "S-Log3 Venice S-Gamut3",
      "S-Log3 Venice S-Gamut3.Cine",
-     "ST2084-P3-D65 - Display",
-     "V-Log V-Gamut",
-     "sRGB - Display",
-     "sRGB Encoded AP1",
+     "Linear S-Gamut3",
+     "Linear S-Gamut3.Cine",
+     "Linear Venice S-Gamut3",
+     "Linear Venice S-Gamut3.Cine",
+     "sRGB Encoded Rec.709 (sRGB)",
+     "Gamma 1.8 Encoded Rec.709",
+     "Gamma 2.2 Encoded Rec.709",
+     "Gamma 2.4 Encoded Rec.709",
+     "Camera Rec.709",
      "sRGB Encoded P3-D65",
-     "sRGB Encoded Rec.709 (sRGB)"
+     "Gamma 2.2 Encoded AdobeRGB",
+     "sRGB Encoded AP1",
+     "Gamma 2.2 Encoded AP1",
+     "Linear AdobeRGB",
+     "Linear P3-D65",
+     "Linear Rec.2020",
+     "Linear Rec.709 (sRGB)",
+     "Raw",
+     "role:aces_interchange",
+     "role:cie_xyz_d65_interchange",
+     "role:color_picking",
+     "role:color_timing",
+     "role:compositing_log",
+     "role:data",
+     "role:matte_paint",
+     "role:scene_linear",
+     "role:texture_paint"
     ],
     "config": {
-     "default": "ACEScg"
+     "default": "ACEScg",
+     "tooltip": "Source colourspace. Lists come from the active OCIO config ($OCIO or built-in ACES); changing $OCIO needs a ComfyUI restart."
     }
    },
    "out_colorspace": {
     "type": [
+     "sRGB - Display",
+     "Gamma 2.2 Rec.709 - Display",
+     "Display P3 - Display",
+     "Display P3 HDR - Display",
+     "P3-D65 - Display",
+     "Rec.1886 Rec.709 - Display",
+     "Rec.2100-HLG - Display",
+     "Rec.2100-PQ - Display",
+     "ST2084-P3-D65 - Display",
      "ACES2065-1",
      "ACEScc",
      "ACEScct",
      "ACEScg",
      "ADX10",
      "ADX16",
-     "ARRI LogC3 (EI800)",
-     "ARRI LogC4",
      "Apple Log",
+     "ARRI LogC3 (EI800)",
+     "Linear ARRI Wide Gamut 3",
+     "ARRI LogC4",
+     "Linear ARRI Wide Gamut 4",
      "BMDFilm WideGamut Gen5",
-     "Camera Rec.709",
+     "Linear BMD WideGamut Gen5",
+     "DaVinci Intermediate WideGamut",
+     "Linear DaVinci WideGamut",
      "CanonLog2 CinemaGamut D55",
+     "Linear CinemaGamut D55",
      "CanonLog3 CinemaGamut D55",
      "D-Log D-Gamut",
-     "DaVinci Intermediate WideGamut",
-     "Display P3 - Display",
-     "Display P3 HDR - Display",
-     "Gamma 1.8 Encoded Rec.709",
-     "Gamma 2.2 Encoded AP1",
-     "Gamma 2.2 Encoded AdobeRGB",
-     "Gamma 2.2 Encoded Rec.709",
-     "Gamma 2.2 Rec.709 - Display",
-     "Gamma 2.4 Encoded Rec.709",
-     "Linear ARRI Wide Gamut 3",
-     "Linear ARRI Wide Gamut 4",
-     "Linear AdobeRGB",
-     "Linear BMD WideGamut Gen5",
-     "Linear CinemaGamut D55",
      "Linear D-Gamut",
-     "Linear DaVinci WideGamut",
-     "Linear P3-D65",
-     "Linear REDWideGamutRGB",
-     "Linear Rec.2020",
-     "Linear Rec.709 (sRGB)",
-     "Linear S-Gamut3",
-     "Linear S-Gamut3.Cine",
+     "V-Log V-Gamut",
      "Linear V-Gamut",
-     "Linear Venice S-Gamut3",
-     "Linear Venice S-Gamut3.Cine",
      "Log3G10 REDWideGamutRGB",
-     "P3-D65 - Display",
-     "Raw",
-     "Rec.1886 Rec.709 - Display",
-     "Rec.2100-HLG - Display",
-     "Rec.2100-PQ - Display",
+     "Linear REDWideGamutRGB",
      "S-Log3 S-Gamut3",
      "S-Log3 S-Gamut3.Cine",
      "S-Log3 Venice S-Gamut3",
      "S-Log3 Venice S-Gamut3.Cine",
-     "ST2084-P3-D65 - Display",
-     "V-Log V-Gamut",
-     "sRGB - Display",
-     "sRGB Encoded AP1",
+     "Linear S-Gamut3",
+     "Linear S-Gamut3.Cine",
+     "Linear Venice S-Gamut3",
+     "Linear Venice S-Gamut3.Cine",
+     "sRGB Encoded Rec.709 (sRGB)",
+     "Gamma 1.8 Encoded Rec.709",
+     "Gamma 2.2 Encoded Rec.709",
+     "Gamma 2.4 Encoded Rec.709",
+     "Camera Rec.709",
      "sRGB Encoded P3-D65",
-     "sRGB Encoded Rec.709 (sRGB)"
+     "Gamma 2.2 Encoded AdobeRGB",
+     "sRGB Encoded AP1",
+     "Gamma 2.2 Encoded AP1",
+     "Linear AdobeRGB",
+     "Linear P3-D65",
+     "Linear Rec.2020",
+     "Linear Rec.709 (sRGB)",
+     "Raw",
+     "role:aces_interchange",
+     "role:cie_xyz_d65_interchange",
+     "role:color_picking",
+     "role:color_timing",
+     "role:compositing_log",
+     "role:data",
+     "role:matte_paint",
+     "role:scene_linear",
+     "role:texture_paint"
     ],
     "config": {
-     "default": "sRGB Encoded Rec.709 (sRGB)"
+     "default": "sRGB Encoded Rec.709 (sRGB)",
+     "tooltip": "Destination colourspace. Lists come from the active OCIO config ($OCIO or built-in ACES); changing $OCIO needs a ComfyUI restart."
     }
    }
   },
@@ -1501,19 +1454,11 @@
   "output_node": false,
   "has_is_changed": false,
   "has_validate": false,
-  "doc": "OCIO Display/View transformation node.\n\n    Applies a display transform (similar to Nuke's viewer process).\n    Useful for converting scene-referred images to display-referred for viewing.\n\n    Supports ACES 2.0 built-in configs (no external config files needed).\n\n    The 'invert' parameter allows round-tripping:\n    - forward: linear -> tonemapped (for viewing)\n    - inverse: tonemapped -> linear (to reverse a display transform)",
+  "doc": "OCIO display/view transform, similar to Nuke's OCIODisplay / viewer process.\n\n    Converts a scene-referred image to display-referred using a display and\n    view of the active OCIO config.\n\n    The 'invert' parameter allows round-tripping:\n    - forward: linear -> display (for viewing)\n    - inverse: display -> linear (to reverse a display transform)",
   "inputs_required": {
    "image": {
     "type": "IMAGE",
     "config": {}
-   },
-   "config": {
-    "type": [
-     "ACES 2.0 Studio Config"
-    ],
-    "config": {
-     "default": "ACES 2.0 Studio Config"
-    }
    },
    "display": {
     "type": [
@@ -1528,7 +1473,8 @@
      "ST2084-P3-D65 - Display"
     ],
     "config": {
-     "default": "sRGB - Display"
+     "default": "sRGB - Display",
+     "tooltip": "Target display. Lists come from the active OCIO config ($OCIO or built-in ACES); changing $OCIO needs a ComfyUI restart."
     }
    },
    "view": {
@@ -1536,72 +1482,93 @@
      "ACES 2.0 - SDR 100 nits (Rec.709)",
      "Un-tone-mapped",
      "Video (colorimetric)",
-     "Raw"
+     "Raw",
+     "ACES 2.0 - SDR 100 nits (P3 D65)",
+     "ACES 2.0 - HDR 1000 nits (P3 D65)",
+     "ACES 2.0 - HDR 1000 nits (Rec.2020)",
+     "ACES 2.0 - HDR 2000 nits (P3 D65)",
+     "ACES 2.0 - HDR 2000 nits (Rec.2020)",
+     "ACES 2.0 - HDR 4000 nits (P3 D65)",
+     "ACES 2.0 - HDR 4000 nits (Rec.2020)",
+     "ACES 2.0 - HDR 500 nits (P3 D65)",
+     "ACES 2.0 - HDR 500 nits (Rec.2020)",
+     "ACES 2.0 - HDR 108 nits (P3 D65)"
     ],
     "config": {
-     "default": "ACES 2.0 - SDR 100 nits (Rec.709)"
+     "default": "ACES 2.0 - SDR 100 nits (Rec.709)",
+     "tooltip": "View transform (must belong to the chosen display). Lists come from the active OCIO config ($OCIO or built-in ACES); changing $OCIO needs a ComfyUI restart."
     }
    },
    "input_colorspace": {
     "type": [
+     "sRGB - Display",
+     "Gamma 2.2 Rec.709 - Display",
+     "Display P3 - Display",
+     "Display P3 HDR - Display",
+     "P3-D65 - Display",
+     "Rec.1886 Rec.709 - Display",
+     "Rec.2100-HLG - Display",
+     "Rec.2100-PQ - Display",
+     "ST2084-P3-D65 - Display",
      "ACES2065-1",
      "ACEScc",
      "ACEScct",
      "ACEScg",
      "ADX10",
      "ADX16",
-     "ARRI LogC3 (EI800)",
-     "ARRI LogC4",
      "Apple Log",
+     "ARRI LogC3 (EI800)",
+     "Linear ARRI Wide Gamut 3",
+     "ARRI LogC4",
+     "Linear ARRI Wide Gamut 4",
      "BMDFilm WideGamut Gen5",
-     "Camera Rec.709",
+     "Linear BMD WideGamut Gen5",
+     "DaVinci Intermediate WideGamut",
+     "Linear DaVinci WideGamut",
      "CanonLog2 CinemaGamut D55",
+     "Linear CinemaGamut D55",
      "CanonLog3 CinemaGamut D55",
      "D-Log D-Gamut",
-     "DaVinci Intermediate WideGamut",
-     "Display P3 - Display",
-     "Display P3 HDR - Display",
-     "Gamma 1.8 Encoded Rec.709",
-     "Gamma 2.2 Encoded AP1",
-     "Gamma 2.2 Encoded AdobeRGB",
-     "Gamma 2.2 Encoded Rec.709",
-     "Gamma 2.2 Rec.709 - Display",
-     "Gamma 2.4 Encoded Rec.709",
-     "Linear ARRI Wide Gamut 3",
-     "Linear ARRI Wide Gamut 4",
-     "Linear AdobeRGB",
-     "Linear BMD WideGamut Gen5",
-     "Linear CinemaGamut D55",
      "Linear D-Gamut",
-     "Linear DaVinci WideGamut",
-     "Linear P3-D65",
-     "Linear REDWideGamutRGB",
-     "Linear Rec.2020",
-     "Linear Rec.709 (sRGB)",
-     "Linear S-Gamut3",
-     "Linear S-Gamut3.Cine",
+     "V-Log V-Gamut",
      "Linear V-Gamut",
-     "Linear Venice S-Gamut3",
-     "Linear Venice S-Gamut3.Cine",
      "Log3G10 REDWideGamutRGB",
-     "P3-D65 - Display",
-     "Raw",
-     "Rec.1886 Rec.709 - Display",
-     "Rec.2100-HLG - Display",
-     "Rec.2100-PQ - Display",
+     "Linear REDWideGamutRGB",
      "S-Log3 S-Gamut3",
      "S-Log3 S-Gamut3.Cine",
      "S-Log3 Venice S-Gamut3",
      "S-Log3 Venice S-Gamut3.Cine",
-     "ST2084-P3-D65 - Display",
-     "V-Log V-Gamut",
-     "sRGB - Display",
-     "sRGB Encoded AP1",
+     "Linear S-Gamut3",
+     "Linear S-Gamut3.Cine",
+     "Linear Venice S-Gamut3",
+     "Linear Venice S-Gamut3.Cine",
+     "sRGB Encoded Rec.709 (sRGB)",
+     "Gamma 1.8 Encoded Rec.709",
+     "Gamma 2.2 Encoded Rec.709",
+     "Gamma 2.4 Encoded Rec.709",
+     "Camera Rec.709",
      "sRGB Encoded P3-D65",
-     "sRGB Encoded Rec.709 (sRGB)"
+     "Gamma 2.2 Encoded AdobeRGB",
+     "sRGB Encoded AP1",
+     "Gamma 2.2 Encoded AP1",
+     "Linear AdobeRGB",
+     "Linear P3-D65",
+     "Linear Rec.2020",
+     "Linear Rec.709 (sRGB)",
+     "Raw",
+     "role:aces_interchange",
+     "role:cie_xyz_d65_interchange",
+     "role:color_picking",
+     "role:color_timing",
+     "role:compositing_log",
+     "role:data",
+     "role:matte_paint",
+     "role:scene_linear",
+     "role:texture_paint"
     ],
     "config": {
-     "default": "ACEScg"
+     "default": "ACEScg",
+     "tooltip": "Colourspace of the input image. Lists come from the active OCIO config ($OCIO or built-in ACES); changing $OCIO needs a ComfyUI restart."
     }
    },
    "invert": {
@@ -1630,7 +1597,7 @@
   "output_node": false,
   "has_is_changed": true,
   "has_validate": false,
-  "doc": "OCIO File Transform node - loads and applies LUT files via OpenColorIO.\n\n    Similar to Nuke's OCIOFileTransform node, this uses OCIO's FileTransform\n    to apply color transforms from LUT files. Supports forward and inverse\n    directions, multiple interpolation modes, and a mix slider.\n\n    Supported formats:\n    - .cube (Resolve, Adobe)\n    - .3dl (Autodesk Flame, Lustre)\n    - .csp (Cinespace)\n    - .spi1d / .spi3d / .spimtx (Sony Pictures Imageworks)\n    - .lut (Houdini)\n    - .cub (Truelight)\n    - .vf (Nuke)\n    - .ccc / .cc (ASC CDL)\n\n    Place LUT files in the 'luts' folder within the nuke-nodes package.",
+  "doc": "OCIO File Transform node - loads and applies LUT files via OpenColorIO.\n\n    Similar to Nuke's OCIOFileTransform node, this uses OCIO's FileTransform\n    to apply color transforms from LUT files. Supports forward and inverse\n    directions, multiple interpolation modes, and a mix slider.\n\n    Supported formats:\n    - .cube (Resolve, Adobe)\n    - .3dl (Autodesk Flame, Lustre)\n    - .csp (Cinespace)\n    - .spi1d / .spi3d / .spimtx (Sony Pictures Imageworks)\n    - .clf / .ctf (Common LUT Format, Autodesk CTF)\n    - .lut (Houdini)\n    - .cub (Truelight)\n    - .vf (Nuke)\n    - .cdl / .ccc / .cc (ASC CDL)\n\n    Place LUT files in the 'luts' folder within the nuke-nodes package.",
   "inputs_required": {
    "image": {
     "type": "IMAGE",
@@ -1701,7 +1668,7 @@
   "output_node": true,
   "has_is_changed": false,
   "has_validate": false,
-  "doc": "OCIO Info node - displays information about the current OCIO configuration.\n\n    Useful for debugging and understanding what color spaces are available.\n    Uses ACES 2.0 Studio Config with full camera support.",
+  "doc": "OCIO Info node - reports the active OCIO configuration.\n\n    Shows where the config came from ($OCIO or built-in ACES), the working\n    space, every colourspace / role / display / view, and the LUT files found\n    in the package's luts/ folder (used by NukeOCIOFileTransform).",
   "inputs_required": {},
   "inputs_optional": {},
   "inputs_hidden": {}
@@ -1865,13 +1832,65 @@
    "colorspace": {
     "type": [
      "raw",
-     "sRGB",
-     "linear",
-     "ACEScg"
+     "sRGB - Display",
+     "Gamma 2.2 Rec.709 - Display",
+     "Display P3 - Display",
+     "Display P3 HDR - Display",
+     "P3-D65 - Display",
+     "Rec.1886 Rec.709 - Display",
+     "Rec.2100-HLG - Display",
+     "Rec.2100-PQ - Display",
+     "ST2084-P3-D65 - Display",
+     "ACES2065-1",
+     "ACEScc",
+     "ACEScct",
+     "ACEScg",
+     "ADX10",
+     "ADX16",
+     "Apple Log",
+     "ARRI LogC3 (EI800)",
+     "Linear ARRI Wide Gamut 3",
+     "ARRI LogC4",
+     "Linear ARRI Wide Gamut 4",
+     "BMDFilm WideGamut Gen5",
+     "Linear BMD WideGamut Gen5",
+     "DaVinci Intermediate WideGamut",
+     "Linear DaVinci WideGamut",
+     "CanonLog2 CinemaGamut D55",
+     "Linear CinemaGamut D55",
+     "CanonLog3 CinemaGamut D55",
+     "D-Log D-Gamut",
+     "Linear D-Gamut",
+     "V-Log V-Gamut",
+     "Linear V-Gamut",
+     "Log3G10 REDWideGamutRGB",
+     "Linear REDWideGamutRGB",
+     "S-Log3 S-Gamut3",
+     "S-Log3 S-Gamut3.Cine",
+     "S-Log3 Venice S-Gamut3",
+     "S-Log3 Venice S-Gamut3.Cine",
+     "Linear S-Gamut3",
+     "Linear S-Gamut3.Cine",
+     "Linear Venice S-Gamut3",
+     "Linear Venice S-Gamut3.Cine",
+     "sRGB Encoded Rec.709 (sRGB)",
+     "Gamma 1.8 Encoded Rec.709",
+     "Gamma 2.2 Encoded Rec.709",
+     "Gamma 2.4 Encoded Rec.709",
+     "Camera Rec.709",
+     "sRGB Encoded P3-D65",
+     "Gamma 2.2 Encoded AdobeRGB",
+     "sRGB Encoded AP1",
+     "Gamma 2.2 Encoded AP1",
+     "Linear AdobeRGB",
+     "Linear P3-D65",
+     "Linear Rec.2020",
+     "Linear Rec.709 (sRGB)",
+     "Raw"
     ],
     "config": {
      "default": "raw",
-     "tooltip": "Colorspace the FILE IS IN on disk (matches Nuke's Read node convention). The node decodes from this into linear Rec.709 working space.\n\n  raw    - no conversion (downstream nodes will handle decoding)\n  sRGB   - file is sRGB-encoded (PNG / JPG); apply IEC 61966-2-1 EOTF to decode -> linear Rec.709\n  linear - file is already linear Rec.709 (EXR); no conversion\n  ACEScg - file is linear ACEScg (AP1 primaries); apply no-CAT AP1 -> Rec.709 primary matrix (matches Nuke nuke-default; strict ACEScg is D60 but legacy mapping treats both as D65 for clean round-trips)"
+     "tooltip": "Colorspace the FILE IS IN on disk (matches Nuke's Read node convention). The node converts from this into the OCIO working space (the config's scene_linear role, e.g. ACEScg).\n\n  raw - no conversion (pixels are passed through as stored)\n  any other entry - OCIO colourspace the file is encoded in (e.g. 'sRGB Encoded Rec.709 (sRGB)' for PNG / JPG, 'ACEScg' for linear EXR)\n\nThe list comes from the active OCIO config ($OCIO, or the built-in ACES Studio config) and is built when ComfyUI starts - restart ComfyUI after changing $OCIO."
     }
    },
    "show_preview": {
@@ -2339,15 +2358,8 @@
     "type": [
      "impulse",
      "cubic",
-     "keys",
-     "simon",
-     "rifman",
-     "mitchell",
-     "parzen",
-     "notch",
-     "lanczos4",
-     "lanczos6",
-     "sinc4"
+     "lanczos",
+     "area"
     ],
     "config": {
      "default": "cubic"
@@ -2361,92 +2373,6 @@
    }
   },
   "inputs_optional": {},
-  "inputs_hidden": {}
- },
- "NukeVectorfield": {
-  "class": "NukeVectorfield",
-  "module": "vectorfield_nodes",
-  "display_name": "Nuke Vectorfield (LUT)",
-  "category": "Nuke/Color",
-  "function": "apply_lut",
-  "return_types": [
-   "IMAGE"
-  ],
-  "return_names": null,
-  "output_node": false,
-  "has_is_changed": true,
-  "has_validate": false,
-  "doc": "VectorField LUT node - loads and applies Look-Up Tables to images.\n\n    Similar to Nuke's Vectorfield node, this applies color transformations\n    defined by LUT files for color grading, technical transforms, and looks.\n\n    Supported formats:\n    - .cube (Resolve, Adobe, general purpose)\n    - .3dl (Autodesk Flame, Lustre)\n    - .spi1d / .spi3d (Sony Pictures Imageworks)\n\n    Place LUT files in the 'luts' folder within the nuke-nodes package.\n\n    Note: .cube files use red-fastest ordering, indexed as [B][G][R].",
-  "inputs_required": {
-   "image": {
-    "type": "IMAGE",
-    "config": {}
-   },
-   "lut_file": {
-    "type": [
-     "ailog_to_linear_4096_1d.cube",
-     "ailog_to_linear_65.cube"
-    ],
-    "config": {
-     "default": "ailog_to_linear_4096_1d.cube"
-    }
-   },
-   "intensity": {
-    "type": "FLOAT",
-    "config": {
-     "default": 1.0,
-     "min": 0.0,
-     "max": 2.0,
-     "step": 0.01
-    }
-   }
-  },
-  "inputs_optional": {
-   "custom_lut_path": {
-    "type": "STRING",
-    "config": {
-     "default": "",
-     "multiline": false,
-     "placeholder": "Optional: path to custom LUT file"
-    }
-   }
-  },
-  "inputs_hidden": {}
- },
- "NukeVectorfieldInfo": {
-  "class": "NukeVectorfieldInfo",
-  "module": "vectorfield_nodes",
-  "display_name": "Nuke Vectorfield Info",
-  "category": "Nuke/Color",
-  "function": "get_info",
-  "return_types": [
-   "STRING"
-  ],
-  "return_names": null,
-  "output_node": true,
-  "has_is_changed": false,
-  "has_validate": false,
-  "doc": "VectorField Info node - displays information about a LUT file.\n\n    Useful for debugging and understanding LUT properties.",
-  "inputs_required": {
-   "lut_file": {
-    "type": [
-     "ailog_to_linear_4096_1d.cube",
-     "ailog_to_linear_65.cube"
-    ],
-    "config": {
-     "default": "ailog_to_linear_4096_1d.cube"
-    }
-   }
-  },
-  "inputs_optional": {
-   "custom_lut_path": {
-    "type": "STRING",
-    "config": {
-     "default": "",
-     "multiline": false
-    }
-   }
-  },
   "inputs_hidden": {}
  },
  "NukeViewer": {
@@ -2515,7 +2441,7 @@
   },
   "inputs_optional": {
    "mask": {
-    "type": "IMAGE",
+    "type": "MASK",
     "config": {}
    }
   },
@@ -2652,13 +2578,65 @@
    "colorspace": {
     "type": [
      "raw",
-     "sRGB",
-     "linear",
-     "ACEScg"
+     "sRGB - Display",
+     "Gamma 2.2 Rec.709 - Display",
+     "Display P3 - Display",
+     "Display P3 HDR - Display",
+     "P3-D65 - Display",
+     "Rec.1886 Rec.709 - Display",
+     "Rec.2100-HLG - Display",
+     "Rec.2100-PQ - Display",
+     "ST2084-P3-D65 - Display",
+     "ACES2065-1",
+     "ACEScc",
+     "ACEScct",
+     "ACEScg",
+     "ADX10",
+     "ADX16",
+     "Apple Log",
+     "ARRI LogC3 (EI800)",
+     "Linear ARRI Wide Gamut 3",
+     "ARRI LogC4",
+     "Linear ARRI Wide Gamut 4",
+     "BMDFilm WideGamut Gen5",
+     "Linear BMD WideGamut Gen5",
+     "DaVinci Intermediate WideGamut",
+     "Linear DaVinci WideGamut",
+     "CanonLog2 CinemaGamut D55",
+     "Linear CinemaGamut D55",
+     "CanonLog3 CinemaGamut D55",
+     "D-Log D-Gamut",
+     "Linear D-Gamut",
+     "V-Log V-Gamut",
+     "Linear V-Gamut",
+     "Log3G10 REDWideGamutRGB",
+     "Linear REDWideGamutRGB",
+     "S-Log3 S-Gamut3",
+     "S-Log3 S-Gamut3.Cine",
+     "S-Log3 Venice S-Gamut3",
+     "S-Log3 Venice S-Gamut3.Cine",
+     "Linear S-Gamut3",
+     "Linear S-Gamut3.Cine",
+     "Linear Venice S-Gamut3",
+     "Linear Venice S-Gamut3.Cine",
+     "sRGB Encoded Rec.709 (sRGB)",
+     "Gamma 1.8 Encoded Rec.709",
+     "Gamma 2.2 Encoded Rec.709",
+     "Gamma 2.4 Encoded Rec.709",
+     "Camera Rec.709",
+     "sRGB Encoded P3-D65",
+     "Gamma 2.2 Encoded AdobeRGB",
+     "sRGB Encoded AP1",
+     "Gamma 2.2 Encoded AP1",
+     "Linear AdobeRGB",
+     "Linear P3-D65",
+     "Linear Rec.2020",
+     "Linear Rec.709 (sRGB)",
+     "Raw"
     ],
     "config": {
      "default": "raw",
-     "tooltip": "Colorspace to WRITE the file as on disk (matches Nuke's Write node convention). Input is assumed to be in linear Rec.709 working space; the node encodes from linear Rec.709 to the chosen output space.\n\n  raw    - write input as-is, no conversion\n  sRGB   - encode linear Rec.709 -> sRGB via IEC 61966-2-1 OETF (typical for PNG / JPG)\n  linear - write linear Rec.709, no conversion (typical for EXR)\n  ACEScg - encode Rec.709 -> ACEScg (AP1 primaries) via no-CAT primary matrix (matches Nuke nuke-default; strict ACEScg is D60 but legacy mapping treats both as D65 for clean round-trips)"
+     "tooltip": "Colorspace to WRITE the file as on disk (matches Nuke's Write node convention). Input is assumed to be in the OCIO working space (the config's scene_linear role, e.g. ACEScg); the node converts from there into the chosen space.\n\n  raw - write input as-is, no conversion (EXRs are tagged with the working-space name)\n  any other entry - OCIO colourspace to encode to (e.g. 'sRGB Encoded Rec.709 (sRGB)' for PNG / JPG, 'ACEScg' for linear EXR)\n\nThe list comes from the active OCIO config ($OCIO, or the built-in ACES Studio config) and is built when ComfyUI starts - restart ComfyUI after changing $OCIO."
     }
    },
    "show_preview": {

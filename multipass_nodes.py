@@ -18,8 +18,8 @@ from typing import Dict, List, Tuple
 import numpy as np
 import torch
 
-from .io_nodes import (
-    OIIO_AVAILABLE,
+from .image_io import OIIO_AVAILABLE, oiio
+from .sequence import (
     auto_detect_sequence,
     expand_frame_pattern,
     file_change_token,
@@ -28,11 +28,6 @@ from .io_nodes import (
 from .utils import NukeNodeBase
 
 logger = logging.getLogger(__name__)
-
-try:
-    import OpenImageIO as oiio
-except ImportError:
-    oiio = None
 
 
 # ---------------------------------------------------------------------------
@@ -468,9 +463,20 @@ def channel_suffix_for_pass(pass_name: str, channel_count: int) -> list:
     return [f"ch{i}" for i in range(channel_count)]
 
 
+# Bare canonical data-pass names (Nuke / Arnold / V-Ray / Redshift conventions)
+# that the substring hints above cannot catch without also matching colour
+# passes such as "specular" or "diffuse".
+_DATA_PASS_EXACT_NAMES = frozenset({
+    "n", "z", "p", "depth", "normal", "position", "motion", "velocity",
+    "uv", "id", "zback", "ns", "pref", "nref",
+})
+
+
 def is_data_pass(pass_name: str) -> bool:
     """True if the pass should skip colorspace conversion (data, not color)."""
     lname = pass_name.lower()
+    if lname in _DATA_PASS_EXACT_NAMES:
+        return True
     return any(h in lname for h in _DATA_PASS_NAME_HINTS)
 
 

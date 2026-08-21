@@ -299,13 +299,9 @@ app.registerExtension({
         const origOnExecuted = nodeType.prototype.onExecuted;
 
         nodeType.prototype.onExecuted = function(message) {
-            console.log("[NukePreview] onExecuted called", message);
-
             // Handle preview images BEFORE calling original
             // This prevents ComfyUI from creating default image widgets
             if (message && message.images && message.images.length > 0) {
-                console.log("[NukePreview] Found images:", message.images.length);
-
                 if (!this.previewPlayer) {
                     this.previewPlayer = createPreviewPlayer(this);
                 }
@@ -320,8 +316,6 @@ app.registerExtension({
                     }
                 }
 
-                console.log("[NukePreview] show_preview:", showPreview);
-
                 // If preview is enabled, suppress default ComfyUI image display
                 if (showPreview) {
                     // Store images in a custom property so we can still access them
@@ -329,8 +323,6 @@ app.registerExtension({
                     // Clear images array to prevent default ComfyUI display
                     delete message.images;
                     message.images = [];
-
-                    console.log("[NukePreview] Cleared message.images to suppress default display");
                 }
             }
 

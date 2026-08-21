@@ -2,13 +2,21 @@
 Blur and filtering nodes that replicate Nuke's blur functionality
 """
 
+import logging
 import math
 
-import numpy as np
 import torch
 import torch.nn.functional as F
 
-from .utils import NukeNodeBase, ensure_batch_dim, normalize_tensor
+from .utils import (
+    NukeNodeBase,
+    apply_mask_mix,
+    ensure_batch_dim,
+    mask_to_bhw1,
+    normalize_tensor,
+)
+
+logger = logging.getLogger(__name__)
 
 
 class NukeBlur(NukeNodeBase):
@@ -41,7 +49,7 @@ class NukeBlur(NukeNodeBase):
                 ),
             },
             "optional": {
-                "mask": ("IMAGE",),
+                "mask": ("MASK",),
             },
         }
 
@@ -84,21 +92,8 @@ class NukeBlur(NukeNodeBase):
         # Convert back to ComfyUI format
         blurred = blurred.permute(0, 2, 3, 1)
 
-        # Apply mask if provided
-        if mask is not None:
-            mask = ensure_batch_dim(mask)
-            if mask.shape[1:3] != blurred.shape[1:3]:
-                mask = F.interpolate(
-                    mask.permute(0, 3, 1, 2),
-                    size=blurred.shape[1:3],
-                    mode="bilinear",
-                    align_corners=False,
-                ).permute(0, 2, 3, 1)
-
-            mask_alpha = mask[:, :, :, :1]
-            blurred = rgb + (blurred - rgb) * mask_alpha * mix
-        else:
-            blurred = rgb + (blurred - rgb) * mix
+        # Blend by mix and the optional MASK ([H,W] or [B,H,W])
+        blurred = apply_mask_mix(rgb, blurred, mask, mix)
 
         # Recombine with alpha
         if alpha is not None:
@@ -416,7 +411,7 @@ class NukeDefocus(NukeNodeBase):
                 ),
             },
             "optional": {
-                "depth_map": ("IMAGE",),
+                "depth_map": ("MASK",),
                 "focus_distance": (
                     "FLOAT",
                     {"default": 0.5, "min": 0.0, "max": 1.0, "step": 0.01},
@@ -447,19 +442,13 @@ class NukeDefocus(NukeNodeBase):
         if defocus <= 0:
             return (img,)
 
-        # Calculate blur amount based on depth map if provided
+        # Calculate blur amount based on depth map (MASK) if provided
         if depth_map is not None:
-            depth = ensure_batch_dim(depth_map)
-            if depth.shape[1:3] != img.shape[1:3]:
-                depth = F.interpolate(
-                    depth.permute(0, 3, 1, 2),
-                    size=img.shape[1:3],
-                    mode="bilinear",
-                    align_corners=False,
-                ).permute(0, 2, 3, 1)
+            depth_value = mask_to_bhw1(
+                depth_map, img.shape[1], img.shape[2], img.device
+            ).to(img.dtype)
 
             # Calculate blur amount based on distance from focus
-            depth_value = depth[:, :, :, :1]  # Use first channel
             blur_amount = torch.abs(depth_value - focus_distance) * defocus
         else:
             # Uniform blur
@@ -471,7 +460,7 @@ class NukeDefocus(NukeNodeBase):
         )
 
         # Mix with original
-        result = img + (result - img) * mix
+        result = apply_mask_mix(img, result, None, mix)
 
         return (normalize_tensor(result),)
 
