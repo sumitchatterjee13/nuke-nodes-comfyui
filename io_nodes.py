@@ -19,6 +19,7 @@ Sequence patterns supported:
 
 import logging
 import os
+import re
 from typing import List
 
 import folder_paths
@@ -108,6 +109,43 @@ def _file_colorspace_tag(colorspace: str, file_type: str) -> str:
     if file_type == "exr":
         return ocio_config.scene_linear_name()
     return ""
+
+
+# ============================================================================
+# Output path helpers
+# ============================================================================
+
+_FRAME_TOKEN_RX = re.compile(r"%\d*d|#+")
+
+
+def _apply_file_type(file_path: str, file_type: str) -> str:
+    """Force ``file_path`` to end in ``.{file_type}`` without eating a frame token.
+
+    ``os.path.splitext`` would treat the token of ``out.####`` / ``out.%04d``
+    as the extension, so the token is located in the basename first and
+    only an extension that starts AFTER the token counts as a real one:
+
+    - ``out.####``      -> ``out.####.exr``   (token kept, extension appended)
+    - ``out.%04d``      -> ``out.%04d.exr``
+    - ``out_####``      -> ``out_####.exr``
+    - ``out.####.png``  -> ``out.####.exr``   (real extension replaced)
+    - ``out.####.exr``  -> unchanged
+    - ``out``           -> ``out.exr``;  ``x.tif`` (tiff) -> ``x.tiff``
+
+    The comparison is on the bare lower-cased extension, so ``.EXR`` already
+    matches ``exr``. Separators are left exactly as given.
+    """
+    directory, basename = os.path.split(file_path)
+    token = _FRAME_TOKEN_RX.search(basename)
+    stem, ext = os.path.splitext(basename)
+    if token is not None and len(stem) < token.end():
+        # The only "." is before/inside the token: no real extension.
+        new_basename = f"{basename}.{file_type}"
+    elif ext.lower().lstrip(".") != file_type:
+        new_basename = f"{stem}.{file_type}"
+    else:
+        return file_path
+    return os.path.join(directory, new_basename) if directory else new_basename
 
 
 # ============================================================================
@@ -384,7 +422,9 @@ class NukeRead(NukeNodeBase):
         else:
             available_frames = []
 
-        # Load images
+        # Load images. A black placeholder is recorded as None and filled in
+        # AFTER the loop with the shape of the first frame that actually
+        # loaded, so a missing leading frame no longer forces 512x512.
         images = []
         reference_shape = None
 
@@ -395,8 +435,8 @@ class NukeRead(NukeNodeBase):
                 actual_path = file_path
 
             img = None
-            # True when `img` did not come from disk (black fill or a held
-            # copy of an already-converted frame) and must not be converted.
+            # True when `img` did not come from disk (a held copy of an
+            # already-converted frame) and must not be converted again.
             in_working_space = False
 
             if os.path.exists(actual_path):
@@ -404,28 +444,24 @@ class NukeRead(NukeNodeBase):
             else:
                 # Handle missing frames
                 if missing_frames == "error":
-                    logger.error(f"[NukeRead] Frame not found: {actual_path}")
+                    # Nuke semantics: a missing frame is an error.
+                    raise RuntimeError(f"[NukeRead] Frame not found: {actual_path}")
                 elif missing_frames == "hold" and images:
-                    # Use previous frame (already in working space)
-                    img = images[-1].copy()
-                    in_working_space = True
+                    # Use previous frame (already in working space). A held
+                    # placeholder stays a placeholder (black).
+                    if images[-1] is not None:
+                        img = images[-1].copy()
+                        in_working_space = True
                 elif missing_frames == "nearest" and available_frames:
                     # Find nearest available frame
                     nearest = min(available_frames, key=lambda x: abs(x - f))
                     nearest_path = expand_frame_pattern(pattern, nearest, padding)
                     img = read_image(nearest_path)
-                # "black" - will create black image below
+                # "black" - placeholder, filled below
 
             if img is None:
-                # Create black image with reference size
-                if reference_shape:
-                    img = np.zeros(reference_shape, dtype=np.float32)
-                else:
-                    img = np.zeros((512, 512, 3), dtype=np.float32)
-                in_working_space = True
-            else:
-                if reference_shape is None:
-                    reference_shape = img.shape
+                images.append(None)
+                continue
 
             # Ensure consistent channel count (minimum 3 channels for ComfyUI)
             if len(img.shape) == 2:
@@ -439,7 +475,17 @@ class NukeRead(NukeNodeBase):
             if not in_working_space:
                 img = _to_working_space(img, colorspace)
 
+            if reference_shape is None:
+                reference_shape = img.shape
             images.append(img)
+
+        # Fill black placeholders with the resolution / channel count of the
+        # first frame that loaded; 512x512x3 only when nothing loaded at all.
+        fill_shape = reference_shape or (512, 512, 3)
+        images = [
+            np.zeros(fill_shape, dtype=np.float32) if im is None else im
+            for im in images
+        ]
 
         # Stack into batch
         if images:
@@ -684,29 +730,15 @@ class NukeWrite(NukeNodeBase):
             # Relative path - join with ComfyUI output directory
             file_path = os.path.join(output_base, file_path)
 
-        # Parse frame pattern
+        # Ensure the correct extension WITHOUT eating a frame token
+        # (out.#### -> out.####.exr), then parse the frame pattern once.
+        file_path = _apply_file_type(file_path, file_type)
         pattern, frame_spec, padding = parse_frame_pattern(file_path)
         is_sequence = frame_spec is not None and padding > 0
-
-        # Use custom padding if pattern detected, otherwise use frame_padding parameter
-        if is_sequence:
-            # Pattern already exists, use its padding unless we need to update it
-            pass
-        else:
-            # No pattern in path, use frame_padding parameter
+        if not is_sequence:
+            # No token in path: Nuke-style numbering with frame_padding digits
+            pattern = file_path
             padding = frame_padding
-
-        # Ensure correct extension
-        base, ext = os.path.splitext(file_path)
-        if ext.lower().lstrip(".") != file_type:
-            file_path = f"{base}.{file_type}"
-            pattern, frame_spec, padding_from_pattern = parse_frame_pattern(file_path)
-            # If pattern was detected after adding extension, use it; otherwise keep our padding
-            if frame_spec is not None and padding_from_pattern > 0:
-                is_sequence = True
-                padding = padding_from_pattern
-            else:
-                pattern = file_path
 
         # Create output directory if needed
         if create_directories:
@@ -721,7 +753,8 @@ class NukeWrite(NukeNodeBase):
         def build_target_paths(version: int) -> List[str]:
             """Target paths for the whole batch, with optional _<version>
             base-name suffix. Frame numbers are always appended, Nuke-style
-            ({base}.{frame}{ext}) when the path has no explicit token."""
+            ({base}.{frame}{ext}) when the path has no explicit token.
+            Paths are normalised to the native separator."""
             paths = []
             if is_sequence:
                 # Explicit frame pattern in path (e.g., %04d or ####)
@@ -737,7 +770,7 @@ class NukeWrite(NukeNodeBase):
                 for i in range(batch_size):
                     frame_str = str(frame_start + i).zfill(padding)
                     paths.append(f"{vbase}.{frame_str}{ext_final}")
-            return paths
+            return [os.path.normpath(p) for p in paths]
 
         # Compute the full target set up front
         target_paths = build_target_paths(0)
@@ -893,20 +926,13 @@ class NukeWrite(NukeNodeBase):
         if not os.path.isabs(file_path):
             file_path = os.path.join(output_base, file_path)
 
+        # Force the extension without eating a frame token, then parse once
+        file_path = _apply_file_type(file_path, file_type)
         pattern, frame_spec, padding = parse_frame_pattern(file_path)
         is_sequence = frame_spec is not None and padding > 0
         if not is_sequence:
+            pattern = file_path
             padding = frame_padding
-
-        base, ext = os.path.splitext(file_path)
-        if ext.lower() != f".{file_type}":
-            file_path = f"{base}.{file_type}"
-            pattern, frame_spec, p2 = parse_frame_pattern(file_path)
-            if frame_spec is not None and p2 > 0:
-                is_sequence = True
-                padding = p2
-            else:
-                pattern = file_path
 
         # Multi-pass is a single frame at a time (bundle has no batch dim)
         base_no_ext, ext_final = os.path.splitext(file_path)
@@ -914,17 +940,19 @@ class NukeWrite(NukeNodeBase):
         def build_target_path(version: int) -> str:
             """Target path with optional _<version> base-name suffix.
             Frame number is appended Nuke-style ({base}.{frame}{ext}) when
-            the path has no explicit token."""
+            the path has no explicit token. Native separators."""
             if is_sequence:
                 pat = (
                     pattern
                     if version == 0
                     else _versioned_sequence_pattern(pattern, version)
                 )
-                return expand_frame_pattern(pat, frame_start, padding)
-            vbase = base_no_ext if version == 0 else f"{base_no_ext}_{version}"
-            frame_str = str(frame_start).zfill(padding)
-            return f"{vbase}.{frame_str}{ext_final}"
+                path = expand_frame_pattern(pat, frame_start, padding)
+            else:
+                vbase = base_no_ext if version == 0 else f"{base_no_ext}_{version}"
+                frame_str = str(frame_start).zfill(padding)
+                path = f"{vbase}.{frame_str}{ext_final}"
+            return os.path.normpath(path)
 
         output_path = build_target_path(0)
 

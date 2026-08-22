@@ -35,6 +35,18 @@ def parse_frame_pattern(filepath: str) -> Tuple[str, Optional[str], int]:
     - #### style: image.####.exr
     - Literal frame number: image.0001.exr
 
+    Grammar (strict on purpose so version tags and dates are not mistaken
+    for frame numbers):
+    - ``%0Nd`` anywhere in the path; bare ``%d`` is padding 1 (it expands
+      unpadded, so it reports the padding it actually produces).
+    - a run of ``#`` in the BASENAME only (a ``#`` in a directory name is
+      not a frame token).
+    - a literal frame number only when the digits are immediately preceded
+      by ``.`` or ``_`` and immediately followed by the extension:
+      ``name.0001.exr`` / ``render_0001.exr`` are sequences, while
+      ``shot_v002.exr``, ``out_v2.exr``, ``frame1.png`` and ``img2024.jpg``
+      are single files.
+
     Returns:
         (base_pattern, frame_spec, padding)
         - base_pattern: pattern with %0Nd placeholder
@@ -43,30 +55,30 @@ def parse_frame_pattern(filepath: str) -> Tuple[str, Optional[str], int]:
     """
     # Normalize path separators for consistent handling
     filepath = filepath.replace("\\", "/")
+    slash = filepath.rfind("/")
+    dir_prefix, basename = filepath[: slash + 1], filepath[slash + 1 :]
 
     # Check for %0Nd pattern
     match = re.search(r"%(\d*)d", filepath)
     if match:
-        padding = int(match.group(1)) if match.group(1) else 4
+        padding = int(match.group(1)) if match.group(1) else 1
         return filepath, match.group(0), padding
 
-    # Check for #### pattern
-    match = re.search(r"(#+)", filepath)
+    # Check for #### pattern (basename only)
+    match = re.search(r"(#+)", basename)
     if match:
         hashes = match.group(1)
         padding = len(hashes)
-        pattern = filepath.replace(hashes, f"%0{padding}d")
+        pattern = dir_prefix + basename.replace(hashes, f"%0{padding}d")
         return pattern, hashes, padding
 
-    # Check for frame number in filename (e.g., image.0001.exr)
-    # Match number before extension
-    match = re.search(r"(\d+)(\.[^.]+)$", filepath)
+    # Check for a literal frame number in the basename: digits preceded by
+    # "." or "_" and immediately followed by the extension.
+    match = re.match(r"^(.*[._])(\d+)(\.[^.]+)$", basename)
     if match:
-        frame_str = match.group(1)
+        frame_str = match.group(2)
         padding = len(frame_str)
-        ext = match.group(2)
-        base = filepath[: match.start()]
-        pattern = f"{base}%0{padding}d{ext}"
+        pattern = f"{dir_prefix}{match.group(1)}%0{padding}d{match.group(3)}"
         return pattern, frame_str, padding
 
     return filepath, None, 0
@@ -149,16 +161,29 @@ def detect_sequence(filepath: str) -> Tuple[str, List[int], int]:
 
     logger.info(f"[NukeRead] Found {len(matching_files)} files in sequence")
 
-    # Extract frame numbers
-    frames = []
-    for f in matching_files:
-        # Extract number from filename
-        match = re.search(r"(\d+)\.[^.]+$", f)
-        if match:
-            frames.append(int(match.group(1)))
+    # Extract frame numbers. The "*" glob also matches files with a
+    # different padding (beauty.1.exr next to beauty.0001.exr) and arbitrary
+    # text in the frame field, so validate each hit against the pattern:
+    # the frame field must be all digits and, for padding > 1, exactly
+    # `padding` digits wide. Padding 1 (%d) accepts any digit count.
+    token = re.search(r"%\d*d", pattern)
+    digits_rx = r"(\d+)" if padding <= 1 else r"(\d{%d})" % padding
+    frame_rx = re.compile(
+        "^"
+        + re.escape(pattern[: token.start()])
+        + digits_rx
+        + re.escape(pattern[token.end():])
+        + "$",
+        re.IGNORECASE if _is_windows() else 0,
+    )
 
-    frames.sort()
-    return pattern, frames, padding
+    frames = set()
+    for f in matching_files:
+        match = frame_rx.match(f.replace("\\", "/"))
+        if match:
+            frames.add(int(match.group(1)))
+
+    return pattern, sorted(frames), padding
 
 
 def auto_detect_sequence(filepath: str) -> Optional[Tuple[str, List[int], int]]:
@@ -194,7 +219,11 @@ def auto_detect_sequence(filepath: str) -> Optional[Tuple[str, List[int], int]]:
         return None
 
     ext_rx = f"(?i:{re.escape(ext)})" if _is_windows() else re.escape(ext)
-    name_rx = re.compile("^" + re.escape(stem) + r"([._]?)(\d+)" + ext_rx + "$")
+    # The no-separator form (beauty0001.exr) is only allowed when the stem
+    # ends in a non-digit; otherwise "img2024.jpg" would be split into
+    # "img2024" + frame and a date/version-like name mistaken for a sequence.
+    sep_rx = r"([._])" if stem[-1].isdigit() else r"([._]?)"
+    name_rx = re.compile("^" + re.escape(stem) + sep_rx + r"(\d+)" + ext_rx + "$")
 
     # Group matching frame numbers by (separator, padding)
     groups: Dict[Tuple[str, int], List[int]] = {}

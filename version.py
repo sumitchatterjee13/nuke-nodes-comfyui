@@ -4,7 +4,7 @@ Version information for Nuke Nodes ComfyUI package
 
 # Version information
 # NOTE: keep in sync with the version field in pyproject.toml
-__version__ = "2.0.0"
+__version__ = "2.0.1"
 __version_info__ = tuple(int(part) for part in __version__.split("."))
 
 # Package metadata

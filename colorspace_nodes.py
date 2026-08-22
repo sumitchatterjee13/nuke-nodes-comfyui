@@ -151,10 +151,23 @@ def _get_available_ocio_luts() -> List[str]:
     return sorted(lut_files)
 
 
+def _expand_custom_lut_path(custom_lut_path: str) -> str:
+    """Expand ~ and environment variables in a user-supplied LUT path."""
+    if not custom_lut_path:
+        return ""
+    return os.path.normpath(os.path.expandvars(os.path.expanduser(custom_lut_path)))
+
+
 def _resolve_lut_path(lut_file: str, custom_lut_path: str) -> Optional[str]:
-    """Shared by IS_CHANGED and apply_file_transform so both agree on the file."""
-    if custom_lut_path and os.path.exists(custom_lut_path):
-        return custom_lut_path
+    """Shared by IS_CHANGED and apply_file_transform so both agree on the file.
+
+    A custom path wins only when the file exists; otherwise the dropdown LUT is
+    used (apply_file_transform logs a warning in that case - this helper stays
+    silent because IS_CHANGED calls it on every cache check).
+    """
+    expanded = _expand_custom_lut_path(custom_lut_path)
+    if expanded and os.path.isfile(expanded):
+        return expanded
     if lut_file and lut_file != "No LUTs found":
         return str(_LUTS_DIR / lut_file)
     return None
@@ -541,6 +554,13 @@ class NukeOCIOFileTransform(NukeNodeBase):
             return (image,)
 
         lut_path = _resolve_lut_path(lut_file, custom_lut_path)
+        expanded_custom = _expand_custom_lut_path(custom_lut_path)
+        if expanded_custom and lut_path != expanded_custom:
+            # A typo in custom_lut_path must not silently apply another LUT
+            logger.warning(
+                f"[NukeOCIO] FileTransform: custom_lut_path '{custom_lut_path}' "
+                f"not found - falling back to the dropdown LUT '{lut_path}'"
+            )
         if lut_path is None:
             logger.warning("[NukeOCIO] FileTransform: no LUT file specified - passing image through")
             return (image,)

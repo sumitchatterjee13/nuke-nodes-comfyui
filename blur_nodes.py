@@ -18,10 +18,51 @@ from .utils import (
 
 logger = logging.getLogger(__name__)
 
+# Gaussian truncation-radius multiplier per quality (gaussian kernels only)
+QUALITY_MULTIPLIERS = {"low": 1.0, "medium": 2.0, "high": 3.0}
+# Defocus "disk": number of stacked gaussian passes per quality
+DISK_PASSES = {"low": 1, "medium": 2, "high": 3}
+# Defocus "hexagon": coverage sub-samples per pixel axis per quality
+HEXAGON_SUPERSAMPLES = {"low": 1, "medium": 2, "high": 4}
+
+
+def _pad_axis(tensor, pad, axis, edge_mode):
+    """Pad an NCHW tensor by ``pad`` pixels on both sides of one axis.
+
+    ``axis`` is ``"x"`` (width) or ``"y"`` (height).
+
+    ``edge_mode``:
+      - ``"zero"``: constant zero padding (Nuke "crop" semantics - outside
+        the format is black, so blurs fade to black at the edges).
+      - ``"edge"``: reflect padding; when the pad is not strictly smaller
+        than the image dimension on that axis (torch's reflect limit) the
+        pass falls back to replicate padding instead of raising.
+    """
+    if pad <= 0:
+        return tensor
+    pads = (pad, pad, 0, 0) if axis == "x" else (0, 0, pad, pad)
+    if edge_mode == "zero":
+        return F.pad(tensor, pads, mode="constant", value=0.0)
+    dim = tensor.shape[3] if axis == "x" else tensor.shape[2]
+    mode = "reflect" if pad < dim else "replicate"
+    return F.pad(tensor, pads, mode=mode)
+
+
+def _depthwise_conv2d(tensor, kernel_2d, edge_mode="edge"):
+    """Convolve every channel of an NCHW tensor with the same 2-D kernel
+    ``[kh, kw]`` (odd sizes), padding each axis with ``_pad_axis`` so the
+    spatial size is preserved."""
+    kh, kw = kernel_2d.shape
+    channels = tensor.shape[1]
+    weight = kernel_2d.to(tensor.dtype).view(1, 1, kh, kw).repeat(channels, 1, 1, 1)
+    padded = _pad_axis(tensor, kw // 2, "x", edge_mode)
+    padded = _pad_axis(padded, kh // 2, "y", edge_mode)
+    return F.conv2d(padded, weight, groups=channels)
+
 
 class NukeBlur(NukeNodeBase):
     """
-    Gaussian blur node with separate X/Y controls (similar to Nuke's Blur node)
+    Separable blur node with separate X/Y controls (similar to Nuke's Blur node)
     """
 
     @classmethod
@@ -57,9 +98,15 @@ class NukeBlur(NukeNodeBase):
     FUNCTION = "blur"
     CATEGORY = "Nuke/Filter"
 
+    FILTERS = ("gaussian", "box", "triangle", "quadratic")
+
     def blur(self, image, size_x, size_y, filter, quality, crop, mix, mask=None):
         """
-        Apply Gaussian blur with separate X/Y controls
+        Apply a separable blur with separate X/Y controls.
+
+        ``crop`` follows Nuke: True treats everything outside the image as
+        black (the blur fades to black at the format edges); False treats
+        the outside as the edge colour (reflect padding, no fade).
         """
         img = ensure_batch_dim(image)
 
@@ -74,18 +121,13 @@ class NukeBlur(NukeNodeBase):
         # Convert to tensor format for convolution (B, C, H, W)
         rgb_tensor = rgb.permute(0, 3, 1, 2)
 
+        edge_mode = "zero" if crop else "edge"
+
         # Apply blur
-        if size_x > 0 or size_y > 0:
-            if filter == "gaussian":
-                blurred = self._gaussian_blur(rgb_tensor, size_x, size_y, quality)
-            elif filter == "box":
-                blurred = self._box_blur(rgb_tensor, size_x, size_y)
-            elif filter == "triangle":
-                blurred = self._triangle_blur(rgb_tensor, size_x, size_y)
-            elif filter == "quadratic":
-                blurred = self._quadratic_blur(rgb_tensor, size_x, size_y)
-            else:
-                blurred = rgb_tensor
+        if (size_x > 0 or size_y > 0) and filter in self.FILTERS:
+            blurred = self._separable_blur(
+                rgb_tensor, size_x, size_y, filter, quality, edge_mode
+            )
         else:
             blurred = rgb_tensor
 
@@ -103,159 +145,63 @@ class NukeBlur(NukeNodeBase):
 
         return (normalize_tensor(result),)
 
-    def _gaussian_blur(self, img_tensor, size_x, size_y, quality):
-        """Apply separable Gaussian blur"""
-        # Quality settings
-        quality_multipliers = {"low": 1.0, "medium": 2.0, "high": 3.0}
-        quality_mult = quality_multipliers[quality]
+    # ------------------------------------------------------------------ kernels
 
-        # Calculate kernel sizes
-        kernel_size_x = int(size_x * quality_mult * 2) * 2 + 1  # Ensure odd
-        kernel_size_y = int(size_y * quality_mult * 2) * 2 + 1
+    def _kernel_1d(self, filter, size, quality, device):
+        """Build the normalised 1-D kernel for one axis, or return None when
+        the pass is a no-op (size <= 0, or a kernel of a single tap).
 
-        result = img_tensor
+        Box / triangle / quadratic are exact finite-support shapes: every
+        integer tap inside the support (radius ``int(size * 2)``) is used,
+        so ``quality`` has nothing to add and is ignored for them. The
+        gaussian has infinite support; ``quality`` sets how far the kernel
+        is truncated (radius ``int(size * qmult * 2)``) while
+        ``sigma = size / 3`` stays fixed.
+        """
+        if size <= 0:
+            return None
+        if filter == "gaussian":
+            radius = int(size * QUALITY_MULTIPLIERS[quality] * 2)
+        else:
+            radius = int(size * 2)
+        kernel_size = radius * 2 + 1
+        if kernel_size <= 1:
+            return None
 
-        # Apply horizontal blur
-        if size_x > 0 and kernel_size_x > 1:
-            sigma_x = size_x / 3.0  # Standard deviation
-            kernel_x = self._create_gaussian_kernel(
-                kernel_size_x, sigma_x, img_tensor.device
-            )
-            kernel_x = kernel_x.view(1, 1, 1, -1).repeat(img_tensor.shape[1], 1, 1, 1)
-
-            # Apply padding
-            pad_x = kernel_size_x // 2
-            result = F.pad(result, (pad_x, pad_x, 0, 0), mode="reflect")
-            result = F.conv2d(result, kernel_x, groups=img_tensor.shape[1])
-
-        # Apply vertical blur
-        if size_y > 0 and kernel_size_y > 1:
-            sigma_y = size_y / 3.0
-            kernel_y = self._create_gaussian_kernel(
-                kernel_size_y, sigma_y, img_tensor.device
-            )
-            kernel_y = kernel_y.view(1, 1, -1, 1).repeat(img_tensor.shape[1], 1, 1, 1)
-
-            # Apply padding
-            pad_y = kernel_size_y // 2
-            result = F.pad(result, (0, 0, pad_y, pad_y), mode="reflect")
-            result = F.conv2d(result, kernel_y, groups=img_tensor.shape[1])
-
-        return result
-
-    def _create_gaussian_kernel(self, kernel_size, sigma, device):
-        """Create 1D Gaussian kernel"""
         coords = torch.arange(kernel_size, dtype=torch.float32, device=device)
-        coords -= kernel_size // 2
-
-        kernel = torch.exp(-(coords**2) / (2 * sigma**2))
-        kernel = kernel / kernel.sum()
-
-        return kernel
-
-    def _box_blur(self, img_tensor, size_x, size_y):
-        """Apply box blur (uniform kernel)"""
-        result = img_tensor
-
-        # Horizontal box blur
-        if size_x > 0:
-            kernel_size_x = int(size_x * 2) * 2 + 1
-            kernel_x = (
-                torch.ones(1, 1, 1, kernel_size_x, device=img_tensor.device)
-                / kernel_size_x
-            )
-            kernel_x = kernel_x.repeat(img_tensor.shape[1], 1, 1, 1)
-
-            pad_x = kernel_size_x // 2
-            result = F.pad(result, (pad_x, pad_x, 0, 0), mode="reflect")
-            result = F.conv2d(result, kernel_x, groups=img_tensor.shape[1])
-
-        # Vertical box blur
-        if size_y > 0:
-            kernel_size_y = int(size_y * 2) * 2 + 1
-            kernel_y = (
-                torch.ones(1, 1, kernel_size_y, 1, device=img_tensor.device)
-                / kernel_size_y
-            )
-            kernel_y = kernel_y.repeat(img_tensor.shape[1], 1, 1, 1)
-
-            pad_y = kernel_size_y // 2
-            result = F.pad(result, (0, 0, pad_y, pad_y), mode="reflect")
-            result = F.conv2d(result, kernel_y, groups=img_tensor.shape[1])
-
-        return result
-
-    def _triangle_blur(self, img_tensor, size_x, size_y):
-        """Apply triangle blur (triangular kernel)"""
-        result = img_tensor
-
-        # Horizontal triangle blur
-        if size_x > 0:
-            kernel_size_x = int(size_x * 2) * 2 + 1
-            center = kernel_size_x // 2
-            coords = torch.arange(
-                kernel_size_x, dtype=torch.float32, device=img_tensor.device
-            )
-            kernel_x = 1 - torch.abs(coords - center) / (center + 1)
-            kernel_x = kernel_x / kernel_x.sum()
-            kernel_x = kernel_x.view(1, 1, 1, -1).repeat(img_tensor.shape[1], 1, 1, 1)
-
-            pad_x = kernel_size_x // 2
-            result = F.pad(result, (pad_x, pad_x, 0, 0), mode="reflect")
-            result = F.conv2d(result, kernel_x, groups=img_tensor.shape[1])
-
-        # Vertical triangle blur
-        if size_y > 0:
-            kernel_size_y = int(size_y * 2) * 2 + 1
-            center = kernel_size_y // 2
-            coords = torch.arange(
-                kernel_size_y, dtype=torch.float32, device=img_tensor.device
-            )
-            kernel_y = 1 - torch.abs(coords - center) / (center + 1)
-            kernel_y = kernel_y / kernel_y.sum()
-            kernel_y = kernel_y.view(1, 1, -1, 1).repeat(img_tensor.shape[1], 1, 1, 1)
-
-            pad_y = kernel_size_y // 2
-            result = F.pad(result, (0, 0, pad_y, pad_y), mode="reflect")
-            result = F.conv2d(result, kernel_y, groups=img_tensor.shape[1])
-
-        return result
-
-    def _quadratic_blur(self, img_tensor, size_x, size_y):
-        """Apply quadratic blur (quadratic kernel)"""
-        result = img_tensor
-
-        # Horizontal quadratic blur
-        if size_x > 0:
-            kernel_size_x = int(size_x * 2) * 2 + 1
-            center = kernel_size_x // 2
-            coords = torch.arange(
-                kernel_size_x, dtype=torch.float32, device=img_tensor.device
-            )
+        center = kernel_size // 2
+        if filter == "gaussian":
+            sigma = size / 3.0
+            kernel = torch.exp(-((coords - center) ** 2) / (2 * sigma**2))
+        elif filter == "box":
+            kernel = torch.ones(kernel_size, dtype=torch.float32, device=device)
+        elif filter == "triangle":
+            kernel = 1 - torch.abs(coords - center) / (center + 1)
+        elif filter == "quadratic":
             distances = torch.abs(coords - center) / (center + 1)
-            kernel_x = torch.clamp(1 - distances**2, min=0)
-            kernel_x = kernel_x / kernel_x.sum()
-            kernel_x = kernel_x.view(1, 1, 1, -1).repeat(img_tensor.shape[1], 1, 1, 1)
+            kernel = torch.clamp(1 - distances**2, min=0)
+        else:
+            return None
+        return kernel / kernel.sum()
 
-            pad_x = kernel_size_x // 2
-            result = F.pad(result, (pad_x, pad_x, 0, 0), mode="reflect")
-            result = F.conv2d(result, kernel_x, groups=img_tensor.shape[1])
+    def _separable_blur(self, img_tensor, size_x, size_y, filter, quality, edge_mode):
+        """Horizontal pass (width axis) then vertical pass (height axis)."""
+        result = img_tensor
+        channels = img_tensor.shape[1]
 
-        # Vertical quadratic blur
-        if size_y > 0:
-            kernel_size_y = int(size_y * 2) * 2 + 1
-            center = kernel_size_y // 2
-            coords = torch.arange(
-                kernel_size_y, dtype=torch.float32, device=img_tensor.device
-            )
-            distances = torch.abs(coords - center) / (center + 1)
-            kernel_y = torch.clamp(1 - distances**2, min=0)
-            kernel_y = kernel_y / kernel_y.sum()
-            kernel_y = kernel_y.view(1, 1, -1, 1).repeat(img_tensor.shape[1], 1, 1, 1)
+        kernel_x = self._kernel_1d(filter, size_x, quality, img_tensor.device)
+        if kernel_x is not None:
+            ks = kernel_x.numel()
+            weight = kernel_x.to(img_tensor.dtype).view(1, 1, 1, ks).repeat(channels, 1, 1, 1)
+            result = _pad_axis(result, ks // 2, "x", edge_mode)
+            result = F.conv2d(result, weight, groups=channels)
 
-            pad_y = kernel_size_y // 2
-            result = F.pad(result, (0, 0, pad_y, pad_y), mode="reflect")
-            result = F.conv2d(result, kernel_y, groups=img_tensor.shape[1])
+        kernel_y = self._kernel_1d(filter, size_y, quality, img_tensor.device)
+        if kernel_y is not None:
+            ks = kernel_y.numel()
+            weight = kernel_y.to(img_tensor.dtype).view(1, 1, ks, 1).repeat(channels, 1, 1, 1)
+            result = _pad_axis(result, ks // 2, "y", edge_mode)
+            result = F.conv2d(result, weight, groups=channels)
 
         return result
 
@@ -300,7 +246,8 @@ class NukeMotionBlur(NukeNodeBase):
 
     def motion_blur(self, image, distance, angle, samples, shutter, center_bias, mix):
         """
-        Apply directional motion blur
+        Apply directional motion blur: a weighted average of ``samples``
+        copies of the image shifted along the motion vector.
         """
         img = ensure_batch_dim(image)
 
@@ -318,43 +265,46 @@ class NukeMotionBlur(NukeNodeBase):
         img_tensor = img.permute(0, 3, 1, 2)
         height, width = img_tensor.shape[2], img_tensor.shape[3]
 
+        positions = self._sample_positions(samples, shutter)
+        weights = self._sample_weights(samples, center_bias)
+
+        if all(t == 0 for t in positions):
+            # samples == 1 or shutter == 0: every sample is the unshifted
+            # image, so the result is the input itself (bit-exact).
+            return (normalize_tensor(img),)
+
         # Accumulate samples
         accumulated = torch.zeros_like(img_tensor)
-        total_weight = 0
+        total_weight = 0.0
 
-        for i in range(samples):
-            # Calculate sample position
-            if samples == 1:
-                t = 0
-            else:
-                t = (i / (samples - 1) - 0.5) * shutter
+        for t, weight in zip(positions, weights):
+            if weight <= 0:
+                continue
 
-            # Apply center bias
-            if center_bias != 0:
-                # Bias towards center
-                t = t * (1 + center_bias * (1 - 2 * abs(t)))
-
-            # Calculate offset
             offset_x = dx * t
             offset_y = dy * t
 
-            # Create sampling grid
-            grid = self._create_motion_grid(
-                offset_x, offset_y, height, width, img_tensor.device
-            )
+            if offset_x == 0 and offset_y == 0:
+                # Zero shift is the image itself - keep it bit-exact
+                sample = img_tensor
+            else:
+                grid = self._create_motion_grid(
+                    offset_x, offset_y, height, width, img_tensor.device
+                )
+                # Grid is built for batch 1; expand to the batch
+                grid = grid.to(img_tensor.dtype).expand(img_tensor.shape[0], -1, -1, -1)
+                sample = F.grid_sample(
+                    img_tensor,
+                    grid,
+                    mode="bilinear",
+                    padding_mode="zeros",
+                    align_corners=False,
+                )
 
-            # Sample image (grid is built for batch 1; expand to the batch)
-            grid = grid.expand(img_tensor.shape[0], -1, -1, -1)
-            sample = F.grid_sample(
-                img_tensor, grid, mode="bilinear", align_corners=False
-            )
-
-            # Weight based on distance from center (optional)
-            weight = 1.0
             accumulated += sample * weight
             total_weight += weight
 
-        # Average samples
+        # Weighted average of the samples
         blurred_tensor = accumulated / total_weight
 
         # Convert back to ComfyUI format
@@ -365,21 +315,46 @@ class NukeMotionBlur(NukeNodeBase):
 
         return (normalize_tensor(result),)
 
+    @staticmethod
+    def _sample_positions(samples, shutter):
+        """Shutter-relative positions t in [-shutter/2, +shutter/2], evenly spaced."""
+        if samples <= 1:
+            return [0.0]
+        return [(i / (samples - 1) - 0.5) * shutter for i in range(samples)]
+
+    @staticmethod
+    def _sample_weights(samples, center_bias):
+        """Per-sample weights: ``1 + center_bias * (1 - 2 * |u|)`` where u is
+        the sample's normalised position in [-0.5, 0.5]. Positive bias weights
+        the centre of the shutter more (sharper core, softer trails); negative
+        bias weights the ends more (ghosted look). The end samples always
+        keep weight 1, so the total weight is positive for samples >= 2. A
+        single sample always has weight 1."""
+        if samples <= 1:
+            return [1.0]
+        bias = max(-1.0, min(1.0, float(center_bias)))
+        weights = []
+        for i in range(samples):
+            u = i / (samples - 1) - 0.5
+            weights.append(max(0.0, 1.0 + bias * (1.0 - 2.0 * abs(u))))
+        return weights
+
     def _create_motion_grid(self, offset_x, offset_y, height, width, device):
-        """Create sampling grid for motion blur"""
-        # Create coordinate grid
-        y_coords = torch.linspace(-1, 1, height, device=device)
-        x_coords = torch.linspace(-1, 1, width, device=device)
+        """Create a pixel-centre-aligned sampling grid shifted by a pixel offset.
+
+        With ``align_corners=False`` the normalised coordinate of pixel
+        centre ``col`` is ``2 * (col + 0.5) / W - 1`` and a shift of
+        ``offset_px`` pixels is ``2 * offset_px / W`` (same for rows / H).
+        """
+        x_coords = (2.0 * (torch.arange(width, dtype=torch.float32, device=device) + 0.5) / width) - 1.0
+        y_coords = (2.0 * (torch.arange(height, dtype=torch.float32, device=device) + 0.5) / height) - 1.0
         y_grid, x_grid = torch.meshgrid(y_coords, x_coords, indexing="ij")
 
-        # Apply offset (convert pixel offset to normalized coordinates)
-        x_offset_norm = offset_x * 2 / width
-        y_offset_norm = offset_y * 2 / height
+        # Convert pixel offset to normalised units
+        x_grid_offset = x_grid + 2.0 * offset_x / width
+        y_grid_offset = y_grid + 2.0 * offset_y / height
 
-        x_grid_offset = x_grid + x_offset_norm
-        y_grid_offset = y_grid + y_offset_norm
-
-        # Stack coordinates
+        # Stack coordinates (x first)
         grid = torch.stack([x_grid_offset, y_grid_offset], dim=2).unsqueeze(0)
 
         return grid
@@ -389,6 +364,8 @@ class NukeDefocus(NukeNodeBase):
     """
     Depth-of-field style defocus blur
     """
+
+    METHODS = ("gaussian", "disk", "hexagon")
 
     @classmethod
     def INPUT_TYPES(cls):
@@ -435,7 +412,9 @@ class NukeDefocus(NukeNodeBase):
         focus_distance=0.5,
     ):
         """
-        Apply depth-of-field defocus blur
+        Apply a defocus blur. The blur is uniform over the image; an optional
+        depth map only scales its strength by the largest deviation from
+        ``focus_distance`` (see the guide).
         """
         img = ensure_batch_dim(image)
 
@@ -454,7 +433,7 @@ class NukeDefocus(NukeNodeBase):
             # Uniform blur
             blur_amount = torch.full_like(img[:, :, :, :1], defocus)
 
-        # Apply variable blur
+        # Apply blur (uniform, strength = max of blur_amount)
         result = self._apply_variable_blur(
             img, blur_amount, aspect_ratio, quality, method
         )
@@ -465,105 +444,74 @@ class NukeDefocus(NukeNodeBase):
         return (normalize_tensor(result),)
 
     def _apply_variable_blur(self, img, blur_amount, aspect_ratio, quality, method):
-        """Apply spatially varying blur"""
-        # For simplicity, we'll apply uniform blur based on maximum blur amount
-        # A full implementation would use more sophisticated techniques
+        """Apply a uniform blur whose strength is the maximum blur amount.
 
+        ``aspect_ratio`` scales the HORIZONTAL extent of the bokeh relative
+        to the vertical one (> 1 = wider than tall).
+        """
         max_blur = torch.max(blur_amount).item()
 
         if max_blur <= 0:
             return img
 
+        if method not in self.METHODS:
+            logger.warning(
+                "NukeDefocus: unknown method %r, falling back to 'disk'", method
+            )
+            method = "disk"
+
         # Convert to tensor format
         img_tensor = img.permute(0, 3, 1, 2)
+        device = img_tensor.device
+
+        # Horizontal / vertical bokeh sizes in pixels
+        size_x = max_blur
+        size_y = max_blur / aspect_ratio
 
         if method == "gaussian":
-            # Apply Gaussian blur
-            size_x = max_blur
-            size_y = max_blur / aspect_ratio
-
-            # Create Gaussian kernel
-            quality_mult = {"low": 1.0, "medium": 2.0, "high": 3.0}[quality]
-            kernel_size = int(max_blur * quality_mult * 2) * 2 + 1
-
-            if kernel_size > 1:
-                sigma = max_blur / 3.0
-                kernel = self._create_gaussian_kernel_2d(
-                    kernel_size, sigma, sigma / aspect_ratio, img_tensor.device
-                )
-                kernel = (
-                    kernel.unsqueeze(0)
-                    .unsqueeze(0)
-                    .repeat(img_tensor.shape[1], 1, 1, 1)
-                )
-
-                pad = kernel_size // 2
-                img_padded = F.pad(img_tensor, (pad, pad, pad, pad), mode="reflect")
-                result = F.conv2d(img_padded, kernel, groups=img_tensor.shape[1])
-            else:
-                result = img_tensor
+            quality_mult = QUALITY_MULTIPLIERS[quality]
+            radius_x = max(1, int(size_x * quality_mult * 2))
+            radius_y = max(1, int(size_y * quality_mult * 2))
+            kernel = self._create_gaussian_kernel_2d(
+                radius_x, radius_y, size_x / 3.0, size_y / 3.0, device
+            )
+            result = _depthwise_conv2d(img_tensor, kernel)
 
         elif method == "disk":
-            # Disk blur approximation using multiple Gaussian passes
+            # Soft-disk approximation: `passes` stacked gaussian passes whose
+            # combined sigma is size / 2 on each axis at every quality
+            # (per-pass sigma = total sigma / sqrt(passes)). Each pass
+            # covers at least 3 sigma and never less than 1 pixel.
+            passes = DISK_PASSES[quality]
+            sigma_x = (size_x / 2.0) / math.sqrt(passes)
+            sigma_y = (size_y / 2.0) / math.sqrt(passes)
+            radius_x = max(1, int(math.ceil(3.0 * sigma_x)))
+            radius_y = max(1, int(math.ceil(3.0 * sigma_y)))
+            kernel = self._create_gaussian_kernel_2d(
+                radius_x, radius_y, sigma_x, sigma_y, device
+            )
             result = img_tensor
-            passes = {"low": 1, "medium": 2, "high": 3}[quality]
-
             for _ in range(passes):
-                size_x = max_blur / passes
-                size_y = size_x / aspect_ratio
+                result = _depthwise_conv2d(result, kernel)
 
-                kernel_size = int(size_x * 2) * 2 + 1
-                if kernel_size > 1:
-                    sigma_x = size_x / 2.0
-                    sigma_y = size_y / 2.0
-                    kernel = self._create_gaussian_kernel_2d(
-                        kernel_size, sigma_x, sigma_y, img_tensor.device
-                    )
-                    kernel = (
-                        kernel.unsqueeze(0)
-                        .unsqueeze(0)
-                        .repeat(result.shape[1], 1, 1, 1)
-                    )
-
-                    pad = kernel_size // 2
-                    result_padded = F.pad(result, (pad, pad, pad, pad), mode="reflect")
-                    result = F.conv2d(result_padded, kernel, groups=result.shape[1])
-
-        elif method == "hexagon":
-            # Hexagonal blur approximation
-            result = img_tensor
-            # This would require a more complex implementation
-            # For now, fall back to Gaussian
-            size_x = max_blur
-            size_y = max_blur / aspect_ratio
-
-            kernel_size = int(max_blur * 2) * 2 + 1
-            if kernel_size > 1:
-                sigma = max_blur / 3.0
-                kernel = self._create_gaussian_kernel_2d(
-                    kernel_size, sigma, sigma / aspect_ratio, img_tensor.device
-                )
-                kernel = (
-                    kernel.unsqueeze(0)
-                    .unsqueeze(0)
-                    .repeat(img_tensor.shape[1], 1, 1, 1)
-                )
-
-                pad = kernel_size // 2
-                img_padded = F.pad(img_tensor, (pad, pad, pad, pad), mode="reflect")
-                result = F.conv2d(img_padded, kernel, groups=img_tensor.shape[1])
-            else:
-                result = img_tensor
+        else:  # hexagon
+            kernel = self._create_hexagon_kernel(
+                size_x, aspect_ratio, HEXAGON_SUPERSAMPLES[quality], device
+            )
+            result = _depthwise_conv2d(img_tensor, kernel)
 
         # Convert back to ComfyUI format
         return result.permute(0, 2, 3, 1)
 
-    def _create_gaussian_kernel_2d(self, size, sigma_x, sigma_y, device):
-        """Create 2D Gaussian kernel"""
-        coords = torch.arange(size, dtype=torch.float32, device=device)
-        coords -= size // 2
-
-        x_grid, y_grid = torch.meshgrid(coords, coords, indexing="ij")
+    def _create_gaussian_kernel_2d(self, radius_x, radius_y, sigma_x, sigma_y, device):
+        """Create a normalised 2-D Gaussian kernel of shape
+        ``[2 * radius_y + 1, 2 * radius_x + 1]``; ``sigma_x`` governs the
+        horizontal (column) spread and ``sigma_y`` the vertical (row) spread."""
+        sigma_x = max(float(sigma_x), 1e-4)
+        sigma_y = max(float(sigma_y), 1e-4)
+        coords_x = torch.arange(-radius_x, radius_x + 1, dtype=torch.float32, device=device)
+        coords_y = torch.arange(-radius_y, radius_y + 1, dtype=torch.float32, device=device)
+        y_grid, x_grid = torch.meshgrid(coords_y, coords_x, indexing="ij")
 
         kernel = torch.exp(
             -(x_grid**2) / (2 * sigma_x**2) - (y_grid**2) / (2 * sigma_y**2)
@@ -571,6 +519,37 @@ class NukeDefocus(NukeNodeBase):
         kernel = kernel / kernel.sum()
 
         return kernel
+
+    def _create_hexagon_kernel(self, radius, aspect_ratio, supersamples, device):
+        """Rasterise a regular flat-top hexagon into a normalised 2-D kernel.
+
+        The hexagon has circumradius ``max(radius, 1)`` pixels horizontally
+        (vertex to vertex along the row axis) and a half-height of
+        ``radius * sqrt(3) / 2 / aspect_ratio`` (flat edges top and bottom).
+        Each pixel's weight is the fraction of ``supersamples x supersamples``
+        sub-positions inside the hexagon.
+        """
+        r = max(float(radius), 1.0)
+        half_height = r * math.sqrt(3.0) / 2.0 / aspect_ratio
+        radius_x = int(math.ceil(r))
+        radius_y = int(math.ceil(half_height))
+        ss = max(1, int(supersamples))
+
+        sub = (torch.arange(ss, dtype=torch.float32, device=device) + 0.5) / ss - 0.5
+        xs = (torch.arange(-radius_x, radius_x + 1, dtype=torch.float32, device=device)[:, None] + sub[None, :]).reshape(-1)
+        ys = (torch.arange(-radius_y, radius_y + 1, dtype=torch.float32, device=device)[:, None] + sub[None, :]).reshape(-1)
+        # Undo the vertical aspect scaling so the test is against a regular hexagon
+        ys_unit = ys * aspect_ratio
+        ax = torch.abs(xs)[None, :]
+        ay = torch.abs(ys_unit)[:, None]
+        inside = (ay <= r * math.sqrt(3.0) / 2.0 + 1e-6) & (ax + ay / math.sqrt(3.0) <= r + 1e-6)
+        coverage = inside.to(torch.float32).reshape(2 * radius_y + 1, ss, 2 * radius_x + 1, ss).mean(dim=(1, 3))
+
+        total = coverage.sum()
+        if total <= 0:
+            coverage[radius_y, radius_x] = 1.0
+            total = coverage.sum()
+        return coverage / total
 
 
 # Node mappings

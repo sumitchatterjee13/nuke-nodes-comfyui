@@ -138,6 +138,11 @@ def create_preview_images(
     temp_dir = folder_paths.get_temp_directory()
     os.makedirs(temp_dir, exist_ok=True)
 
+    # One random id per call: id(tensor) can be reused by CPython once the
+    # tensor is freed, which made two batches share (and cache-collide on)
+    # the same thumbnail filenames.
+    batch_id = uuid.uuid4().hex
+
     for i in range(0, batch_size, frame_step):
         if len(previews) >= max_frames:
             break
@@ -157,7 +162,7 @@ def create_preview_images(
         img_np = resize_image_oiio(img_np, max_size)
 
         # Save to temporary file
-        preview_filename = f"nuke_preview_{id(images)}_{i}.png"
+        preview_filename = f"nuke_preview_{batch_id}_{i}.png"
         preview_path = os.path.join(temp_dir, preview_filename)
 
         if save_preview_oiio(img_np, preview_path):

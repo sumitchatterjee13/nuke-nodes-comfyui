@@ -2,6 +2,24 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.0.1] - 2026-08-21
+
+Correctness release found while writing the behavioural specification. No interface changes - saved 2.0.0 workflows load unchanged.
+
+### Fixed
+
+- **Frame grammar was too eager**: a literal frame number is now recognised only when preceded by `.` or `_` and followed by the extension (`name.0001.exr`, `render_0001.exr`); version-like names (`shot_v002.exr`, `out_v2.exr`) and names ending in digits (`img2024.jpg`) are single files. `#` tokens are recognised in the file name only, not in directory names. `%d` means padding 1.
+- **NukeWrite collapsed sequences when the path had a token but no extension** (`out.####` wrote every frame to `out.exr`); the token is kept and `.exr` appended (`out.0001.exr`, ...). Returned paths use the native separator consistently.
+- **NukeRead crashed on a missing leading frame** for footage that is not 512x512; placeholder frames now take the resolution of the first loaded frame. `missing_frames="error"` now raises (Nuke semantics) instead of logging and filling black.
+- `detect_sequence` no longer mixes paddings or returns duplicate frame numbers.
+- Preview thumbnails use unique (UUID) file names - previously names derived from tensor ids could collide.
+- **NukeMotionBlur** sampled half a pixel off (even `samples=1` blurred and darkened edges); the grid is pixel-centre aligned and `samples=1` is an exact identity.
+- **NukeDefocus**: `aspect_ratio` now widens the bokeh horizontally (it acted on the vertical axis); `hexagon` is a real hexagonal kernel (it was identical to low-quality gaussian); an unknown `method` falls back to `disk` with a warning instead of crashing; the blur never degenerates to a no-op at higher quality.
+- Blur/Defocus no longer crash on images smaller than the kernel (replicate padding fallback).
+- **NukeBlur `crop` now does what Nuke's does**: on (default) treats outside the image as black so blurs fade at the format edge; off treats outside as the edge colour. Note: default-parameter renders change within one kernel radius of the image border compared with 2.0.0, which always used reflect padding; set `crop` off for the previous look.
+- NukeReformat returns its result on the input's device and dtype (it always returned CPU float32).
+- NukeOCIOFileTransform logs a warning when `custom_lut_path` is set but missing instead of silently applying the dropdown LUT; `~` and environment variables in the path are expanded.
+
 ## [2.0.0] - 2026-08-20
 
 Major release. Saved workflows from 1.x need re-wiring where noted below; 1.3.0 stays available on the Comfy Registry and as git tag `v1.3.0`.

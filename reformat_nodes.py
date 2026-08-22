@@ -422,7 +422,8 @@ class NukeReformat(NukeNodeBase):
                 item, w_out, h_out, center, black_outside
             )
 
-        result = torch.from_numpy(out)
+        # Return on the input's device/dtype (cv2 work happens on CPU float32)
+        result = torch.from_numpy(out).to(device=image.device, dtype=image.dtype)
         return (normalize_tensor(result),)
 
     def _resolve_format(
