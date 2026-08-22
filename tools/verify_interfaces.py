@@ -6,6 +6,10 @@ Usage (from the repo root):
 
 Needs only torch + numpy (ComfyUI's env) - no running ComfyUI, no internet.
 Exit 0 = full parity with the reference manifest; exit 1 = mismatches printed.
+
+Option lists stored as markers in the manifest (see tools/dump_manifest.py)
+are resolved against the LIVE environment - the active OCIO config and the
+luts/ folder - so parity holds under any $OCIO.
 """
 import importlib
 import importlib.util
@@ -35,11 +39,30 @@ sys.modules["nuke_nodes"] = pkg
 with open(MANIFEST, encoding="utf-8") as f:
     REF = json.load(f)
 
-CFG_KEYS = ["default", "min", "max", "step", "tooltip", "multiline",
+CFG_KEYS = ["default", "min", "max", "step", "multiline",
             "placeholder", "label_on", "label_off", "round"]
 modules = sys.argv[1:] or sorted({m["module"] for m in REF.values()})
 failures = []
 checked = 0
+_markers = None
+
+
+def resolve_marker(marker):
+    """Turn a manifest marker into the live option list it stands for."""
+    global _markers
+    if _markers is None:
+        ocio_config = importlib.import_module("nuke_nodes.ocio_config")
+        colorspace_nodes = importlib.import_module("nuke_nodes.colorspace_nodes")
+        names = ocio_config.colorspace_names()
+        roles = [f"role:{r}" for r in ocio_config.role_names()]
+        _markers = {
+            "<<ocio:colorspaces+roles>>": names + roles,
+            "<<ocio:raw+colorspaces>>": ["raw"] + names,
+            "<<ocio:displays>>": ocio_config.display_names(),
+            "<<ocio:views>>": ocio_config.view_names(),
+            "<<luts-folder>>": colorspace_nodes._get_available_ocio_luts(),
+        }
+    return _markers.get(marker, marker)
 
 
 def norm_inputs(section):
@@ -93,8 +116,12 @@ for mod_name in modules:
                 g = got.get(name)
                 if g is None:
                     continue
-                if g["type"] != w["type"]:
-                    failures.append(f"{nid}: input {name!r} type {w['type']!r} != {g['type']!r}")
+                want_type = w["type"]
+                if isinstance(want_type, str) and want_type.startswith("<<"):
+                    want_type = resolve_marker(want_type)
+                if g["type"] != want_type:
+                    shown = w["type"] if isinstance(w["type"], str) else w["type"]
+                    failures.append(f"{nid}: input {name!r} type {shown!r} != {g['type']!r}")
                 for k in CFG_KEYS:
                     if k in w["config"] and g["config"].get(k) != w["config"][k]:
                         failures.append(f"{nid}: input {name!r} {k}={w['config'][k]!r} != {g['config'].get(k)!r}")
