@@ -104,6 +104,33 @@ def read_image(filepath: str) -> Optional[np.ndarray]:
     return img
 
 
+def read_colorspace_hint(filepath: str) -> Optional[str]:
+    """The colourspace a file claims to be in, or None when it says nothing.
+
+    Prefers the EXR ``colorInteropID`` header (ASWF Color Interop ID, written
+    by OpenImageIO >= 3.1 and other recent tools) and falls back to OIIO's
+    ``oiio:ColorSpace`` attribute, which may be a config name, an alias or an
+    interop ID depending on the OIIO version and the format (OIIO reports
+    untagged PNG / JPEG as sRGB). Raises RuntimeError when OpenImageIO is
+    not installed.
+    """
+    _require_oiio()
+    try:
+        inp = oiio.ImageInput.open(filepath)
+        if inp is None:
+            return None
+        spec = inp.spec()
+        inp.close()
+    except Exception as e:
+        logger.warning(f"[NukeRead] OIIO error reading header of {filepath}: {e}")
+        return None
+    for key in ("colorInteropID", "oiio:ColorSpace"):
+        value = spec.get_string_attribute(key, "")
+        if value:
+            return value
+    return None
+
+
 # ============================================================================
 # Writers
 # ============================================================================

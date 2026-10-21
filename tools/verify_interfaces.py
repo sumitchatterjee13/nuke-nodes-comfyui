@@ -58,6 +58,7 @@ def resolve_marker(marker):
         _markers = {
             "<<ocio:colorspaces+roles>>": names + roles,
             "<<ocio:raw+colorspaces>>": ["raw"] + names,
+            "<<ocio:raw+auto+colorspaces>>": ["raw", "auto"] + names,
             "<<ocio:displays>>": ocio_config.display_names(),
             "<<ocio:views>>": ocio_config.view_names(),
             "<<luts-folder>>": colorspace_nodes._get_available_ocio_luts(),

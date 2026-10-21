@@ -2,6 +2,20 @@
 
 All notable changes to this project will be documented in this file.
 
+## [Unreleased]
+
+### Changed
+
+- **NukeWrite's default EXR `compression` is now `zips`** (Zip, 1 scanline - Nuke's Write default, lossless). It was `dwaa`, which is lossy: a raw pass-through of a test plate changed 94% of its pixel values. Saved workflows keep the value stored in them; only newly created nodes get the new default. `zips`, `zip`, `piz`, `rle` and `none` are lossless; `pxr24` is lossless for 16f only; `b44`, `b44a`, `dwaa` and `dwab` are lossy (now spelled out in the knob's tooltip).
+- **NukeWrite `colorspace=raw` no longer tags EXRs with the working-space name.** The node cannot know what space pass-through pixels are in, and with OpenImageIO 3.1+ the tag becomes an EXR `colorInteropID` header - a raw write of an ACES2065-1 plate was labelled `lin_ap1_scene` (ACEScg). Raw files of every format are now untagged; files written in a named colourspace are tagged as before. Applies to the multi-pass writer too.
+- **The built-in config list knows OpenColorIO 2.6.** With OCIO 2.6 the pack uses the ACES 2.1 Studio config (`studio-config-v5.0.0_aces-v2.1_ocio-v2.6`); OCIO 2.5 keeps the ACES 2.0 config. ACES 2.1 adds `Apple Log 2` / `Linear Apple Wide Gamut` and renames the `P3-D65 - Display` display to `Gamma 2.6 P3-D65 - Display` (re-pick it in saved NukeOCIODisplay nodes after upgrading OCIO); Output Transforms are unchanged. The test suite passes on OCIO 2.5.0 and 2.6.0.
+
+### Added
+
+- **NukeRead `colorspace=auto`** takes the colourspace from the file's own metadata (the EXR `colorInteropID` header first, then OpenImageIO's `oiio:ColorSpace` tag) and converts from it into the working space. Tags are resolved against the active config by name, alias or ASWF Color Interop ID (`lin_ap0_scene`, `srgb_rec709_scene`, ...), with OpenColorIO 2.6's `findColorSpaceForID` fallback rules when available and a plain interop-id match on 2.5. Untagged PNG and JPEG count as sRGB (what OpenImageIO reports); EXR / TIFF without a tag pass through raw with a warning. Files written by NukeWrite in a named colourspace come back through `auto` without re-picking the space. `NukeReadInfo` shows the tag and what `auto` would resolve it to.
+- `$OCIO` may name a built-in config by URI (`ocio://studio-config-latest`, `ocio://studio-config-v4.0.0_aces-v2.0_ocio-v2.5`, ...; OpenColorIO 2.3+). Such a value used to be rejected as a missing file, silently falling back to the pack's own list.
+- Regression tests (`tests/test_write_color.py`, `tests/test_ocio_config.py`): the Write defaults are lossless, raw writes are untagged, named writes are tagged, an ACES2065-1 -> ACEScg -> ACES2065-1 round trip stays within one half-float step, `$OCIO` URIs resolve, and every built-in studio config of the installed OCIO is a known candidate.
+
 ## [2.0.1] - 2026-08-21
 
 Correctness release found while writing the behavioural specification. No interface changes - saved 2.0.0 workflows load unchanged.

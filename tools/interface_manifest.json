@@ -498,7 +498,7 @@
    "last_frame": {"type": "INT", "config": {"default": 1, "min": -999999, "max": 999999, "step": 1}},
    "frame_mode": {"type": ["single", "range", "all"], "config": {"default": "single"}},
    "missing_frames": {"type": ["error", "black", "hold", "nearest"], "config": {"default": "black"}},
-   "colorspace": {"type": "<<ocio:raw+colorspaces>>", "config": {"default": "raw"}},
+   "colorspace": {"type": "<<ocio:raw+auto+colorspaces>>", "config": {"default": "raw"}},
    "show_preview": {"type": "BOOLEAN", "config": {"default": true}}
   },
   "inputs_hidden": {}
@@ -673,7 +673,7 @@
    "passes": {"type": "NUKE_PASSES", "config": {}},
    "file_type": {"type": ["exr", "tiff", "png", "jpg", "dpx", "hdr", "tga", "bmp", "webp"], "config": {"default": "exr"}},
    "bit_depth": {"type": ["8", "16", "16f", "32f"], "config": {"default": "16f"}},
-   "compression": {"type": ["none", "rle", "zip", "zips", "piz", "pxr24", "b44", "b44a", "dwaa", "dwab"], "config": {"default": "dwaa"}},
+   "compression": {"type": ["none", "rle", "zip", "zips", "piz", "pxr24", "b44", "b44a", "dwaa", "dwab"], "config": {"default": "zips"}},
    "frame_padding": {"type": "INT", "config": {"default": 4, "min": 1, "max": 10, "step": 1}},
    "overwrite": {"type": "BOOLEAN", "config": {"default": false}},
    "create_directories": {"type": "BOOLEAN", "config": {"default": true}},

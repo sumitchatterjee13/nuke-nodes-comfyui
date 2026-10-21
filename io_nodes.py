@@ -33,6 +33,7 @@ from .image_io import (
     get_supported_formats,
     oiio,
     oiio_version,
+    read_colorspace_hint,
     read_image,
     write_image,
 )
@@ -64,10 +65,17 @@ _OCIO_RESTART_NOTE = (
 
 
 def _colorspace_choices() -> List[str]:
-    """Combo options for the Read/Write ``colorspace`` input."""
+    """Combo options for the Write ``colorspace`` input."""
     if not ocio_config.OCIO_AVAILABLE:
         return ["raw"]
     return ["raw"] + ocio_config.colorspace_names()
+
+
+def _read_colorspace_choices() -> List[str]:
+    """Combo options for the Read ``colorspace`` input: raw, auto, then the config."""
+    if not ocio_config.OCIO_AVAILABLE:
+        return ["raw"]
+    return ["raw", "auto"] + ocio_config.colorspace_names()
 
 
 def _resolve_colorspace(colorspace: str, node_tag: str) -> str:
@@ -97,17 +105,51 @@ def _from_working_space(img: np.ndarray, colorspace: str) -> np.ndarray:
     return ocio_config.apply_transform(img, ocio_config.scene_linear_name(), colorspace)
 
 
-def _file_colorspace_tag(colorspace: str, file_type: str) -> str:
+def _detect_file_colorspace(path: str, cache: dict, node_tag: str = "NukeRead") -> str:
+    """Colourspace to convert ``path`` from when the Read is set to "auto".
+
+    Reads the file's colour metadata (``image_io.read_colorspace_hint``) and
+    maps it to a colourspace of the active config. Files without a usable tag
+    are passed through as "raw" with a warning. ``cache`` maps a hint to its
+    resolution so a sequence logs each outcome once.
+    """
+    hint = read_colorspace_hint(path)
+    if hint in cache:
+        return cache[hint]
+    if hint is None:
+        resolved = "raw"
+        logger.warning(
+            f"[{node_tag}] colorspace 'auto': {os.path.basename(path)} carries no "
+            f"colourspace metadata; passing pixels through as 'raw'"
+        )
+    else:
+        name = ocio_config.resolve_colorspace_hint(hint)
+        if name is None:
+            resolved = "raw"
+            logger.warning(
+                f"[{node_tag}] colorspace 'auto': file tag '{hint}' is not in the "
+                f"active OCIO config; passing pixels through as 'raw'"
+            )
+        else:
+            resolved = name
+            logger.info(
+                f"[{node_tag}] colorspace 'auto': file tag '{hint}' -> '{name}' -> "
+                f"'{ocio_config.scene_linear_name()}' (working space)"
+            )
+    cache[hint] = resolved
+    return resolved
+
+
+def _file_colorspace_tag(colorspace: str) -> str:
     """Value for the ``oiio:ColorSpace`` attribute, or "" to leave it unset.
 
-    Files written in a named colourspace are tagged with it. "raw" EXRs are
-    tagged with the working-space name (linear by convention); other "raw"
-    formats are left untagged so viewers do not misinterpret them.
+    Files written in a named colourspace are tagged with it. "raw" files are
+    left untagged: the node cannot know what space pass-through pixels are
+    in, and a wrong tag is worse than none (OpenImageIO >= 3.1 turns the tag
+    into an EXR ``colorInteropID`` header that colour-aware readers honour).
     """
     if colorspace != "raw":
         return colorspace
-    if file_type == "exr":
-        return ocio_config.scene_linear_name()
     return ""
 
 
@@ -221,7 +263,7 @@ class NukeRead(NukeNodeBase):
                     {"default": "black"},
                 ),
                 "colorspace": (
-                    _colorspace_choices(),
+                    _read_colorspace_choices(),
                     {
                         "default": "raw",
                         "tooltip": (
@@ -231,6 +273,11 @@ class NukeRead(NukeNodeBase):
                             "scene_linear role, e.g. ACEScg).\n\n"
                             "  raw - no conversion (pixels are passed through "
                             "as stored)\n"
+                            "  auto - take the colourspace from the file's "
+                            "metadata (EXR colorInteropID / OpenImageIO tag; "
+                            "untagged PNG and JPEG count as sRGB) and convert "
+                            "from it; files without a usable tag are passed "
+                            "through raw with a warning\n"
                             "  any other entry - OCIO colourspace the file is "
                             "encoded in (e.g. 'sRGB Encoded Rec.709 (sRGB)' for "
                             "PNG / JPG, 'ACEScg' for linear EXR)\n\n"
@@ -371,7 +418,10 @@ class NukeRead(NukeNodeBase):
 
         # Resolve colour handling once (warns if OCIO is missing)
         colorspace = _resolve_colorspace(colorspace, "NukeRead")
-        if colorspace != "raw":
+        auto_cache = {}  # file tag -> resolved colourspace, for colorspace="auto"
+        if colorspace == "auto":
+            logger.info("[NukeRead] Colorspace: 'auto' (from each file's metadata)")
+        elif colorspace != "raw":
             logger.info(
                 f"[NukeRead] Colorspace: '{colorspace}' -> "
                 f"'{ocio_config.scene_linear_name()}' (working space)"
@@ -438,9 +488,12 @@ class NukeRead(NukeNodeBase):
             # True when `img` did not come from disk (a held copy of an
             # already-converted frame) and must not be converted again.
             in_working_space = False
+            # The file `img` was decoded from (for colorspace="auto")
+            source_path = None
 
             if os.path.exists(actual_path):
                 img = read_image(actual_path)
+                source_path = actual_path
             else:
                 # Handle missing frames
                 if missing_frames == "error":
@@ -457,6 +510,7 @@ class NukeRead(NukeNodeBase):
                     nearest = min(available_frames, key=lambda x: abs(x - f))
                     nearest_path = expand_frame_pattern(pattern, nearest, padding)
                     img = read_image(nearest_path)
+                    source_path = nearest_path
                 # "black" - placeholder, filled below
 
             if img is None:
@@ -471,9 +525,13 @@ class NukeRead(NukeNodeBase):
 
             # Convention (matches Nuke's Read node): `colorspace` describes
             # what colourspace the FILE IS IN on disk; OCIO converts from
-            # that into the config's scene_linear working space.
+            # that into the config's scene_linear working space. "auto"
+            # takes that space from the file's own metadata.
             if not in_working_space:
-                img = _to_working_space(img, colorspace)
+                file_colorspace = colorspace
+                if colorspace == "auto":
+                    file_colorspace = _detect_file_colorspace(source_path, auto_cache)
+                img = _to_working_space(img, file_colorspace)
 
             if reference_shape is None:
                 reference_shape = img.shape
@@ -593,7 +651,18 @@ class NukeWrite(NukeNodeBase):
                     {"default": "exr"},
                 ),
                 "bit_depth": (bit_depths, {"default": "16f"}),
-                "compression": (exr_compressions, {"default": "dwaa"}),
+                "compression": (
+                    exr_compressions,
+                    {
+                        "default": "zips",
+                        "tooltip": (
+                            "EXR compression. zips (Zip, 1 scanline - Nuke's "
+                            "default), zip, piz, rle and none are lossless. "
+                            "pxr24 is lossless for 16f but lossy for 32f; "
+                            "b44, b44a, dwaa and dwab are lossy."
+                        ),
+                    },
+                ),
                 "frame_padding": (
                     "INT",
                     {
@@ -631,8 +700,8 @@ class NukeWrite(NukeNodeBase):
                             "be in the OCIO working space (the config's "
                             "scene_linear role, e.g. ACEScg); the node converts "
                             "from there into the chosen space.\n\n"
-                            "  raw - write input as-is, no conversion (EXRs are "
-                            "tagged with the working-space name)\n"
+                            "  raw - write input as-is, no conversion and no "
+                            "colourspace tag in the file\n"
                             "  any other entry - OCIO colourspace to encode to "
                             "(e.g. 'sRGB Encoded Rec.709 (sRGB)' for PNG / JPG, "
                             "'ACEScg' for linear EXR)\n\n"
@@ -662,7 +731,7 @@ class NukeWrite(NukeNodeBase):
         passes=None,
         file_type="exr",
         bit_depth="16f",
-        compression="dwaa",
+        compression="zips",
         frame_padding=4,
         overwrite=False,
         create_directories=True,
@@ -796,13 +865,13 @@ class NukeWrite(NukeNodeBase):
                 f"sequence with base suffix _{version}"
             )
 
-        # Prepare metadata. "raw" EXRs are tagged with the working-space
-        # name (linear by convention); other "raw" formats stay untagged so
-        # viewers do not misinterpret them (e.g. a PNG tagged linear).
+        # Prepare metadata. Files written in a named colourspace are tagged
+        # with it; "raw" files carry no colourspace tag (see
+        # _file_colorspace_tag).
         metadata = {
             "Software": "ComfyUI Nuke Nodes",
         }
-        colorspace_tag = _file_colorspace_tag(colorspace, file_type)
+        colorspace_tag = _file_colorspace_tag(colorspace)
         if colorspace_tag:
             metadata["oiio:ColorSpace"] = colorspace_tag
 
@@ -1032,7 +1101,9 @@ class NukeWrite(NukeNodeBase):
         spec.channelnames = tuple(channel_names)
         spec.attribute("compression", compression)
         spec.attribute("Software", "ComfyUI Nuke Nodes")
-        spec.attribute("oiio:ColorSpace", _file_colorspace_tag(colorspace, "exr"))
+        colorspace_tag = _file_colorspace_tag(colorspace)
+        if colorspace_tag:
+            spec.attribute("oiio:ColorSpace", colorspace_tag)
 
         if overwrite:
             # Atomic overwrite: write to a temp file in the same directory
@@ -1204,10 +1275,21 @@ class NukeReadInfo(NukeNodeBase):
                         if compression:
                             info += f"Compression: {compression}\n"
 
-                        # Get colorspace
-                        colorspace = spec.get_string_attribute("oiio:ColorSpace", "")
+                        # Colour tag: EXR colorInteropID first, then OIIO's view
+                        colorspace = (
+                            spec.get_string_attribute("colorInteropID", "")
+                            or spec.get_string_attribute("oiio:ColorSpace", "")
+                        )
                         if colorspace:
                             info += f"Color Space: {colorspace}\n"
+                            if ocio_config.OCIO_AVAILABLE:
+                                resolved = ocio_config.resolve_colorspace_hint(colorspace)
+                                info += (
+                                    "  Read 'auto' would use: "
+                                    f"{resolved or 'raw (tag not in the active OCIO config)'}\n"
+                                )
+                        else:
+                            info += "Color Space: (untagged - Read 'auto' passes through raw)\n"
 
                         inp.close()
                     else:

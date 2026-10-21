@@ -3,7 +3,8 @@ Shared OpenColorIO configuration for all Nuke nodes.
 
 Resolution order (mirrors Nuke):
   1. ``$OCIO`` environment variable pointing at a .ocio file (show / studio
-     config) - resolved once when ComfyUI starts.
+     config) or at a built-in config URI such as
+     ``ocio://studio-config-latest`` - resolved once when ComfyUI starts.
   2. OCIO's built-in ACES Studio configs, newest first.
 
 Every colour-aware node (OCIO nodes, NukeRead / NukeWrite) takes its
@@ -37,6 +38,7 @@ except ImportError:  # pragma: no cover - depends on the host environment
 
 # Built-in ACES Studio configs to try, newest first (used when $OCIO is unset)
 BUILTIN_CONFIGS = [
+    "studio-config-v5.0.0_aces-v2.1_ocio-v2.6",  # ACES 2.1 (OCIO 2.6+)
     "studio-config-v4.0.0_aces-v2.0_ocio-v2.5",  # ACES 2.0 (OCIO 2.5+)
     "studio-config-v2.2.0_aces-v1.3_ocio-v2.4",  # ACES 1.3 (OCIO 2.4+)
     "studio-config-v2.1.0_aces-v1.3_ocio-v2.3",  # ACES 1.3 (OCIO 2.3+)
@@ -80,7 +82,18 @@ def resolve_ocio_config() -> Tuple[Optional["OCIO.Config"], str]:
         return None, "OpenColorIO not installed"
 
     env_path = os.environ.get("OCIO", "").strip()
-    if env_path:
+    if env_path.lower().startswith("ocio://"):
+        # Built-in config URI (OCIO 2.3+), e.g. ocio://studio-config-latest
+        try:
+            config = OCIO.Config.CreateFromFile(env_path)
+            logger.info(f"[NukeOCIO] Loaded built-in config from $OCIO: {env_path}")
+            return config, f"$OCIO={env_path}"
+        except Exception as e:
+            logger.warning(
+                f"[NukeOCIO] $OCIO is set to '{env_path}' but it failed to load ({e}); "
+                f"falling back to the built-in ACES config"
+            )
+    elif env_path:
         path = os.path.normpath(os.path.expandvars(os.path.expanduser(env_path)))
         if os.path.isfile(path):
             try:
@@ -210,6 +223,50 @@ def scene_linear_name(config: Optional["OCIO.Config"] = None) -> str:
         if candidate in names:
             return candidate
     return names[0] if names else FALLBACK_SCENE_LINEAR
+
+
+def resolve_colorspace_hint(
+    hint: str, config: Optional["OCIO.Config"] = None
+) -> Optional[str]:
+    """Map a colourspace hint from file metadata to a colourspace of the config.
+
+    ``hint`` may be a colourspace name, an alias, a role or an ASWF Color
+    Interop ID (``lin_ap0_scene``, ``srgb_rec709_scene``, ...). Returns the
+    canonical colourspace name, or None when the config has no match.
+
+    Resolution order: the config's own name / alias lookup (the built-in ACES
+    configs list interop IDs as aliases), then OCIO 2.6's
+    ``findColorSpaceForID`` (the ASWF fallback rules), then a case-insensitive
+    scan of the colourspaces' ``interop_id`` attribute for OCIO 2.5 configs
+    that set it without an alias.
+    """
+    config = config or _CONFIG
+    hint = (hint or "").strip()
+    if not OCIO_AVAILABLE or config is None or not hint:
+        return None
+    try:
+        cs = config.getColorSpace(hint)
+        if cs is not None:
+            return cs.getName()
+    except Exception:
+        pass
+    finder = getattr(config, "findColorSpaceForID", None)
+    if finder is not None:
+        try:
+            cs = finder(hint)
+            if cs is not None:
+                return cs.getName()
+        except Exception:
+            pass
+    wanted = hint.lower()
+    try:
+        for cs in config.getColorSpaces():
+            get_id = getattr(cs, "getInteropID", None)
+            if get_id is not None and (get_id() or "").lower() == wanted:
+                return cs.getName()
+    except Exception:
+        pass
+    return None
 
 
 def apply_transform(

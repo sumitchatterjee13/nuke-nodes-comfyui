@@ -8,6 +8,7 @@ Environment-derived option lists are stored as MARKERS instead of literal
 values, so the manifest is valid under any $OCIO config and any luts/ folder:
   <<ocio:colorspaces+roles>>  ocio_config.colorspace_names() + "role:<name>" entries
   <<ocio:raw+colorspaces>>    ["raw"] + ocio_config.colorspace_names()
+  <<ocio:raw+auto+colorspaces>>  ["raw", "auto"] + ocio_config.colorspace_names()
   <<ocio:displays>>           ocio_config.display_names()
   <<ocio:views>>              ocio_config.view_names()
   <<luts-folder>>             colorspace_nodes._get_available_ocio_luts()
@@ -50,6 +51,7 @@ def marker_lists():
     return {
         "<<ocio:colorspaces+roles>>": names + roles,
         "<<ocio:raw+colorspaces>>": ["raw"] + names,
+        "<<ocio:raw+auto+colorspaces>>": ["raw", "auto"] + names,
         "<<ocio:displays>>": ocio_config.display_names(),
         "<<ocio:views>>": ocio_config.view_names(),
         "<<luts-folder>>": colorspace_nodes._get_available_ocio_luts(),

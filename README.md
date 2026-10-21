@@ -7,7 +7,7 @@ A collection of ComfyUI custom nodes that replicate Nuke compositing nodes: Read
 ## Features
 
 - **Read/Write**: image sequences via OpenImageIO (EXR, DPX, TIFF, PNG, JPEG, HDR, TGA, BMP, WebP). Bare-path sequence detection, Nuke-style frame numbering, atomic overwrite or whole-sequence versioning, multi-channel EXR in/out.
-- **Colour management**: OpenColorIO with your show config (`$OCIO`) or the built-in ACES 2.0 Studio config; colourspace, display/view and LUT (FileTransform) nodes; Read/Write convert to and from the config's working space.
+- **Colour management**: OpenColorIO with your show config (`$OCIO`) or the built-in ACES Studio config (ACES 2.1 on OpenColorIO 2.6, ACES 2.0 on 2.5); colourspace, display/view and LUT (FileTransform) nodes; Read/Write convert to and from the config's working space.
 - **Merge**: Porter-Duff and blend modes matching Nuke's Merge, plus Dissolve, Keymix and Constant.
 - **Grade / ColorCorrect / Levels / Exposure**, all mask-aware.
 - **Transform / CornerPin / Crop / Reformat** with a shared, bit-exact resampler (impulse, cubic, lanczos, area).
@@ -30,7 +30,7 @@ Restart ComfyUI. All nodes appear under the **Nuke** menu.
 
 - **ComfyUI** (provides PyTorch / NumPy)
 - **OpenImageIO** (`>=2.5`) - required for all image I/O
-- **OpenColorIO** (`>=2.2`, 2.5+ recommended) - colour management; nodes load without it but pass images through
+- **OpenColorIO** (`>=2.2`; 2.5 and 2.6 are tested) - colour management; nodes load without it but pass images through
 - **OpenCV** (`opencv-python-headless`) - resampling for Transform / CornerPin / Reformat
 
 All three install from `requirements.txt` as prebuilt wheels.
@@ -39,10 +39,12 @@ All three install from `requirements.txt` as prebuilt wheels.
 
 At startup the pack resolves its OCIO config in this order:
 
-1. **`$OCIO`** - if the environment variable points at a `.ocio` file (a show or studio config), it is used and every colour dropdown (colourspaces, roles, displays, views) is built from it.
-2. **Built-in ACES 2.0 Studio config** (`studio-config-v4.0.0_aces-v2.0_ocio-v2.5`) otherwise - works out of the box with 55 colourspaces including camera IDTs (ARRI, Sony, RED, Canon, Panasonic, Blackmagic, Apple, DJI).
+1. **`$OCIO`** - if the environment variable points at a `.ocio` file (a show or studio config), it is used and every colour dropdown (colourspaces, roles, displays, views) is built from it. It may also name a built-in config by URI, e.g. `ocio://studio-config-latest` or `ocio://studio-config-v4.0.0_aces-v2.0_ocio-v2.5` (OpenColorIO 2.3+).
+2. **Built-in ACES Studio config** otherwise - the newest one the installed OpenColorIO provides: ACES 2.1 (`studio-config-v5.0.0_aces-v2.1_ocio-v2.6`) on OCIO 2.6, ACES 2.0 (`studio-config-v4.0.0_aces-v2.0_ocio-v2.5`) on OCIO 2.5, ACES 1.3 on older releases. Works out of the box with 55+ colourspaces including camera IDTs (ARRI, Sony, RED, Canon, Panasonic, Blackmagic, Apple, DJI). The ACES 2.1 config adds `Apple Log 2` and renames the `P3-D65 - Display` display to `Gamma 2.6 P3-D65 - Display`; its Output Transforms are unchanged.
 
 The working space is the config's `scene_linear` role (ACEScg in the built-in config). Because dropdowns are built when ComfyUI starts, **changing `$OCIO` requires a ComfyUI restart** - the same model as launching Nuke from a show environment. `NukeOCIOInfo` reports which config is active.
+
+To round-trip a plate without loss, give NukeRead and NukeWrite the same `colorspace` (for an ACES2065-1 plate: `ACES2065-1` on both) and keep a lossless EXR compression such as the default `zips`. `raw` on both nodes passes the pixels through untouched instead.
 
 ## Nodes
 
@@ -51,13 +53,13 @@ The working space is the config's `scene_linear` role (ACEScg in the built-in co
 - **NukeRead** - load an image or sequence
   - `file_path`: `%04d` / `####` patterns, a single frame (`shot.0001.exr`), or just the bare name (`shot.exr`) - with *load_as_sequence* on, siblings like `shot.0001.exr` / `shot_0001.exr` / `shot0001.exr` are detected automatically
   - `frame`, `frame_mode` (single / range / all), `first_frame` / `last_frame`, `missing_frames` (error / black / hold / nearest)
-  - `colorspace`: `raw` (no conversion) or any colourspace of the active OCIO config - the file is converted *from* that space *into* the working space
+  - `colorspace`: `raw` (no conversion), `auto` (take the colourspace from the file's metadata: the EXR `colorInteropID` header or OpenImageIO's tag; untagged PNG and JPEG count as sRGB, files without a usable tag pass through raw with a warning) or any colourspace of the active OCIO config - the file is converted *from* that space *into* the working space
   - Thumbnail preview in the node; re-executes only when the files on disk change
 - **NukeWrite** - save an image or sequence (output node)
   - Relative paths go under ComfyUI's `output/`; absolute paths are used as-is; directories are created
   - Frames are numbered Nuke-style from `frame_start`: `name.0001.exr` (`frame_padding` digits); `%04d` / `####` in the path are honoured
   - `overwrite` **off** (default): if any target frame exists the whole batch is written under a versioned base name (`name_1.0001.exr`, ...) - nothing is ever clobbered; **on**: frames replace existing files atomically (temp file + rename)
-  - `file_type`, `bit_depth` (8 / 16 / 16f / 32f), EXR `compression`, `colorspace` (working space -> chosen space), `channels` (rgb / rgba / all_channels for multi-pass EXR from a `NUKE_PASSES` input)
+  - `file_type`, `bit_depth` (8 / 16 / 16f / 32f), EXR `compression` (default `zips` - Nuke's lossless Zip 1-scanline; `dwaa` / `dwab` / `b44` are lossy), `colorspace` (working space -> chosen space; `raw` writes the input untouched and leaves the file untagged), `channels` (rgb / rgba / all_channels for multi-pass EXR from a `NUKE_PASSES` input)
 - **NukeReadInfo** - resolution, channels, bit depth, sequence range, missing frames, I/O and colour library status
 - **NukeReadMultiPass** - load a multi-channel EXR into a `NUKE_PASSES` bundle + beauty image + pass list
 - **NukeShufflePass** - pick one pass from a `NUKE_PASSES` bundle as an image
