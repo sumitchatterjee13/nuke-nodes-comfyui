@@ -61,7 +61,7 @@ To round-trip a plate without loss, give NukeRead and NukeWrite the same `colors
   - `overwrite` **off** (default): if any target frame exists the whole batch is written under a versioned base name (`name_1.0001.exr`, ...) - nothing is ever clobbered; **on**: frames replace existing files atomically (temp file + rename)
   - `file_type`, `bit_depth` (8 / 16 / 16f / 32f), EXR `compression` (default `zips` - Nuke's lossless Zip 1-scanline; `dwaa` / `dwab` / `b44` are lossy), `colorspace` (working space -> chosen space; `raw` writes the input untouched and leaves the file untagged), `channels` (rgb / rgba / all_channels for multi-pass EXR from a `NUKE_PASSES` input)
 - **NukeReadInfo** - resolution, channels, bit depth, sequence range, missing frames, I/O and colour library status
-- **NukeReadMultiPass** - load a multi-channel EXR into a `NUKE_PASSES` bundle + beauty image + pass list
+- **NukeReadMultiPass** - load a multi-channel EXR into a `NUKE_PASSES` bundle + beauty image + pass list; `colorspace` (`raw` / `auto` / any config colourspace) converts the light passes into the working space and leaves data passes (N, P, Z, motion, IDs, mattes, UVs) untouched
 - **NukeShufflePass** - pick one pass from a `NUKE_PASSES` bundle as an image
 
 ### Merge (`Nuke/Merge`)

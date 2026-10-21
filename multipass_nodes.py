@@ -18,7 +18,15 @@ from typing import Dict, List, Tuple
 import numpy as np
 import torch
 
+from . import ocio_config
 from .image_io import OIIO_AVAILABLE, oiio
+from .io_nodes import (
+    _OCIO_RESTART_NOTE,
+    _detect_file_colorspace,
+    _read_colorspace_choices,
+    _resolve_colorspace,
+    _to_working_space,
+)
 from .sequence import (
     auto_detect_sequence,
     expand_frame_pattern,
@@ -129,6 +137,30 @@ def _passes_to_torch(passes: Dict[str, np.ndarray]) -> Dict[str, torch.Tensor]:
             for name, arr in passes.items()}
 
 
+def _convert_light_passes(
+    passes: Dict[str, torch.Tensor], colorspace: str
+) -> Dict[str, torch.Tensor]:
+    """File colourspace -> working space for every light pass.
+
+    Data passes (see ``is_data_pass``) and 2-channel passes are returned
+    untouched. Mirrors NukeWrite's all_channels mode: a 1-channel light pass
+    is converted as a grey triplet and alpha is passed through unchanged.
+    """
+    out: Dict[str, torch.Tensor] = {}
+    for name, tensor in passes.items():
+        if is_data_pass(name) or tensor.shape[-1] == 2:
+            out[name] = tensor
+            continue
+        arr = np.ascontiguousarray(tensor.numpy(), dtype=np.float32)
+        if arr.shape[-1] == 1:
+            grey = np.repeat(arr, 3, axis=-1)
+            arr = _to_working_space(grey, colorspace)[..., :1]
+        else:
+            arr = _to_working_space(arr, colorspace)
+        out[name] = torch.from_numpy(np.ascontiguousarray(arr)).float()
+    return out
+
+
 def _pass_to_image(arr: torch.Tensor, mode: str = "auto") -> torch.Tensor:
     """
     Convert a pass tensor [H, W, C] to ComfyUI IMAGE tensor [1, H, W, 3 or 4].
@@ -237,6 +269,25 @@ class NukeReadMultiPass(NukeNodeBase):
                     {"default": True,
                      "tooltip": "Print the pass list to the console when executed"},
                 ),
+                "colorspace": (
+                    _read_colorspace_choices(),
+                    {
+                        "default": "raw",
+                        "tooltip": (
+                            "Colorspace the FILE IS IN on disk. Light passes "
+                            "(beauty, diffuse, specular, ...) are converted from "
+                            "it into the OCIO working space; data passes (N, P, "
+                            "Z, motion, IDs, mattes, UVs) are never converted.\n\n"
+                            "  raw - no conversion\n"
+                            "  auto - take the colourspace from the file's "
+                            "metadata (EXR colorInteropID / OpenImageIO tag); an "
+                            "untagged file is passed through raw with a warning\n"
+                            "  any other entry - OCIO colourspace the file is "
+                            "encoded in (e.g. 'ACEScg' for a linear render)\n\n"
+                            + _OCIO_RESTART_NOTE
+                        ),
+                    },
+                ),
             },
         }
 
@@ -281,7 +332,8 @@ class NukeReadMultiPass(NukeNodeBase):
         return file_change_token(actual_path)
 
     def read_multipass(self, file_path, frame,
-                       load_as_sequence=True, print_pass_list=True):
+                       load_as_sequence=True, print_pass_list=True,
+                       colorspace="raw"):
         if not file_path:
             logger.warning("[NukeReadMultiPass] No file path specified")
             empty = torch.zeros((1, 512, 512, 3))
@@ -324,6 +376,19 @@ class NukeReadMultiPass(NukeNodeBase):
             return ({}, empty, f"Load error: {e}")
 
         passes = _passes_to_torch(passes_np)
+
+        # Colour: light passes file colourspace -> working space, data passes
+        # untouched (same split as NukeWrite's all_channels mode).
+        colorspace = _resolve_colorspace(colorspace, "NukeReadMultiPass")
+        if colorspace == "auto":
+            colorspace = _detect_file_colorspace(actual_path, {}, "NukeReadMultiPass")
+        elif colorspace != "raw":
+            logger.info(
+                f"[NukeReadMultiPass] Colorspace: '{colorspace}' -> "
+                f"'{ocio_config.scene_linear_name()}' (working space) for light passes"
+            )
+        if colorspace != "raw":
+            passes = _convert_light_passes(passes, colorspace)
 
         # Build human-readable pass list
         pass_list_str = _format_pass_list(passes, channel_names)

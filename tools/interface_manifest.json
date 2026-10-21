@@ -537,7 +537,8 @@
   },
   "inputs_optional": {
    "load_as_sequence": {"type": "BOOLEAN", "config": {"default": true}},
-   "print_pass_list": {"type": "BOOLEAN", "config": {"default": true}}
+   "print_pass_list": {"type": "BOOLEAN", "config": {"default": true}},
+   "colorspace": {"type": "<<ocio:raw+auto+colorspaces>>", "config": {"default": "raw"}}
   },
   "inputs_hidden": {}
  },
